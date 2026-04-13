@@ -15,6 +15,13 @@
       "when": 1776084639507,
       "tag": "0001_volatile_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1776089807096,
+      "tag": "0002_flat_mephistopheles",
+      "breakpoints": true
     }
   ]
 }

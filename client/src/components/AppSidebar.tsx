@@ -30,6 +30,8 @@ import {
   Sparkles,
   Users,
   Zap,
+  FileText,
+  MonitorCheck,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -41,10 +43,17 @@ const menuGroups = [
     ],
   },
   {
-    label: "账号与内容",
+    label: "账号与站点",
     items: [
       { icon: Users, label: "账号管理", path: "/accounts" },
+      { icon: Globe, label: "Sites 站点管理", path: "/sites" },
+    ],
+  },
+  {
+    label: "内容生产",
+    items: [
       { icon: Sparkles, label: "AI内容生成", path: "/ai-content" },
+      { icon: FileText, label: "SEO 文章模板", path: "/seo-templates" },
       { icon: Image, label: "素材库管理", path: "/materials" },
     ],
   },
@@ -58,7 +67,7 @@ const menuGroups = [
   {
     label: "监控与配置",
     items: [
-      { icon: Search, label: "收录监控", path: "/indexing" },
+      { icon: MonitorCheck, label: "收录监控", path: "/indexing" },
       { icon: Settings, label: "系统设置", path: "/settings" },
     ],
   },

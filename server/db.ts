@@ -327,3 +327,191 @@ export async function getDashboardStats() {
     indexRate,
   };
 }
+
+// ─── SEO Templates ────────────────────────────────────────────────────────────
+import { seoTemplates, InsertSeoTemplate, googleSites, InsertGoogleSite } from "../drizzle/schema";
+
+export async function getSeoTemplates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoTemplates).where(eq(seoTemplates.isActive, true)).orderBy(desc(seoTemplates.createdAt));
+}
+
+export async function getSeoTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(seoTemplates).where(eq(seoTemplates.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createSeoTemplate(data: InsertSeoTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(seoTemplates).values(data);
+}
+
+export async function updateSeoTemplate(id: number, data: Partial<InsertSeoTemplate>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(seoTemplates).set(data).where(eq(seoTemplates.id, id));
+}
+
+export async function deleteSeoTemplate(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(seoTemplates).where(eq(seoTemplates.id, id));
+}
+
+// 预置 5 种 SEO 模板
+export async function seedSeoTemplates() {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await db.select().from(seoTemplates).where(eq(seoTemplates.isPreset, true)).limit(1);
+  if (existing.length > 0) return;
+
+  const presets: InsertSeoTemplate[] = [
+    {
+      name: "信息型文章",
+      type: "informational",
+      description: "适合解释性内容，如「什么是X」「X的定义与原理」",
+      structure: {
+        sections: [
+          { type: "intro", label: "引言段落", hint: "在前100字内自然包含核心关键词，简述文章价值" },
+          { type: "h2", label: "什么是{keyword}？", hint: "定义与背景，150-200字" },
+          { type: "h2", label: "{keyword}的主要特点", hint: "3-5个要点，每个用H3标注，每点50-80字" },
+          { type: "h2", label: "{keyword}的应用场景", hint: "2-3个典型场景，200字" },
+          { type: "h2", label: "常见问题解答（FAQ）", hint: "3-5个Q&A，每个问题用H3标注" },
+          { type: "conclusion", label: "总结", hint: "重申核心价值，包含CTA，100字" },
+          { type: "internal_links", label: "相关文章", hint: "自动插入2-3条同站内链" },
+          { type: "external_links", label: "参考资料", hint: "1-2条权威外链（维基百科等）" }
+        ]
+      },
+      promptTemplate: "你是SEO内容专家。请为关键词「{keyword}」创作一篇信息型文章。要求：1)语言{language}；2)不少于{minWords}字；3)严格按照H1→H2→H3层级组织；4)关键词密度1-2%，自然融入；5)包含FAQ部分；6)Markdown格式输出。",
+      minWords: 800,
+      maxWords: 1200,
+      isPreset: true,
+      isActive: true,
+    },
+    {
+      name: "操作指南型",
+      type: "howto",
+      description: "适合步骤性内容，如「如何做X」「X的完整教程」",
+      structure: {
+        sections: [
+          { type: "intro", label: "引言", hint: "说明本指南能解决什么问题，100字" },
+          { type: "h2", label: "准备工作", hint: "列出所需工具/材料/前提条件" },
+          { type: "h2", label: "详细步骤", hint: "5-8个步骤，每步用H3标注，包含具体操作说明" },
+          { type: "h2", label: "注意事项与常见错误", hint: "3-5条注意事项" },
+          { type: "h2", label: "常见问题解答", hint: "3个Q&A" },
+          { type: "conclusion", label: "总结", hint: "总结步骤，鼓励读者行动" },
+          { type: "internal_links", label: "相关教程", hint: "自动插入2-3条同站内链" }
+        ]
+      },
+      promptTemplate: "你是SEO内容专家。请为关键词「{keyword}」创作一篇操作指南型文章。要求：1)语言{language}；2)不少于{minWords}字；3)包含清晰的步骤编号；4)每步骤有具体可操作的说明；5)关键词密度1-2%；6)Markdown格式。",
+      minWords: 1000,
+      maxWords: 1500,
+      isPreset: true,
+      isActive: true,
+    },
+    {
+      name: "对比评测型",
+      type: "comparison",
+      description: "适合产品/方案对比，如「X vs Y」「最佳X选择」",
+      structure: {
+        sections: [
+          { type: "intro", label: "引言", hint: "说明对比的背景和意义，100字" },
+          { type: "h2", label: "对比概览", hint: "用表格形式列出主要对比维度" },
+          { type: "h2", label: "方案A详解", hint: "优缺点分析，150字" },
+          { type: "h2", label: "方案B详解", hint: "优缺点分析，150字" },
+          { type: "h2", label: "如何选择？", hint: "针对不同场景给出选择建议" },
+          { type: "conclusion", label: "总结推荐", hint: "给出明确推荐，包含CTA" },
+          { type: "internal_links", label: "相关对比", hint: "自动插入2-3条同站内链" }
+        ]
+      },
+      promptTemplate: "你是SEO内容专家。请为关键词「{keyword}」创作一篇对比评测型文章。要求：1)语言{language}；2)不少于{minWords}字；3)包含对比表格；4)客观分析各方案优缺点；5)给出明确选择建议；6)Markdown格式。",
+      minWords: 1000,
+      maxWords: 1500,
+      isPreset: true,
+      isActive: true,
+    },
+    {
+      name: "列表型文章",
+      type: "listicle",
+      description: "适合资源汇总，如「10个最佳X」「X的5大优势」",
+      structure: {
+        sections: [
+          { type: "intro", label: "引言", hint: "说明列表的价值，100字" },
+          { type: "h2", label: "第1-N项：{item}", hint: "每项用H2标注，包含简介+特点+使用场景，每项100-150字" },
+          { type: "h2", label: "如何选择适合你的？", hint: "选择建议，100字" },
+          { type: "conclusion", label: "总结", hint: "汇总要点，包含CTA" },
+          { type: "internal_links", label: "相关推荐", hint: "自动插入2-3条同站内链" }
+        ]
+      },
+      promptTemplate: "你是SEO内容专家。请为关键词「{keyword}」创作一篇列表型文章（如「10个最佳{keyword}」）。要求：1)语言{language}；2)不少于{minWords}字；3)列表项目不少于5个；4)每项有独立H2标题；5)关键词密度1-2%；6)Markdown格式。",
+      minWords: 800,
+      maxWords: 1200,
+      isPreset: true,
+      isActive: true,
+    },
+    {
+      name: "本地化型文章",
+      type: "local",
+      description: "适合地域性内容，如「X城市的Y」「本地X指南」",
+      structure: {
+        sections: [
+          { type: "intro", label: "引言", hint: "介绍本地背景，100字" },
+          { type: "h2", label: "{location}的{keyword}概况", hint: "本地特色介绍，200字" },
+          { type: "h2", label: "推荐选择", hint: "3-5个本地推荐，每个用H3标注" },
+          { type: "h2", label: "实用信息", hint: "地址、交通、价格等实用信息" },
+          { type: "h2", label: "常见问题", hint: "3个本地化Q&A" },
+          { type: "conclusion", label: "总结", hint: "总结推荐，包含CTA" },
+          { type: "internal_links", label: "相关本地内容", hint: "自动插入2-3条同站内链" }
+        ]
+      },
+      promptTemplate: "你是SEO内容专家。请为关键词「{keyword}」创作一篇本地化文章。要求：1)语言{language}；2)不少于{minWords}字；3)突出本地特色和实用信息；4)包含具体地点/场景；5)关键词密度1-2%；6)Markdown格式。",
+      minWords: 600,
+      maxWords: 1000,
+      isPreset: true,
+      isActive: true,
+    },
+  ];
+
+  for (const t of presets) {
+    await db.insert(seoTemplates).values(t);
+  }
+}
+
+// ─── Google Sites ─────────────────────────────────────────────────────────────
+export async function getGoogleSites(accountId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = accountId ? [eq(googleSites.accountId, accountId)] : [];
+  return db.select().from(googleSites)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(googleSites.createdAt));
+}
+
+export async function getGoogleSiteById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(googleSites).where(eq(googleSites.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createGoogleSite(data: InsertGoogleSite) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(googleSites).values(data);
+}
+
+export async function updateGoogleSite(id: number, data: Partial<InsertGoogleSite>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(googleSites).set(data).where(eq(googleSites.id, id));
+}
+
+export async function deleteGoogleSite(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(googleSites).where(eq(googleSites.id, id));
+}

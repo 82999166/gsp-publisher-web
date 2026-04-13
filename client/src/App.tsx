@@ -13,6 +13,8 @@ import Indexing from "./pages/Indexing";
 import Materials from "./pages/Materials";
 import PublishTasks from "./pages/PublishTasks";
 import Settings from "./pages/Settings";
+import SeoTemplates from "./pages/SeoTemplates";
+import GoogleSites from "./pages/GoogleSites";
 
 function Router() {
   return (
@@ -26,6 +28,8 @@ function Router() {
         <Route path="/hyperlinks" component={Hyperlinks} />
         <Route path="/indexing" component={Indexing} />
         <Route path="/settings" component={Settings} />
+        <Route path="/seo-templates" component={SeoTemplates} />
+        <Route path="/sites" component={GoogleSites} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

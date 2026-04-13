@@ -13,7 +13,10 @@ import {
   getSettings, upsertSetting, seedDefaultSettings,
   getKeywords, createKeyword, updateKeyword,
   getDashboardStats,
+  getSeoTemplates, getSeoTemplateById, createSeoTemplate, updateSeoTemplate, deleteSeoTemplate, seedSeoTemplates,
+  getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
 } from "./db";
+import { googleSitesPublisher } from "./googleSitesPublisher";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
@@ -576,6 +579,235 @@ const settingsRouter = router({
   }),
 });
 
+// ─── SEO Templates ──────────────────────────────────────────────────────────
+const seoTemplatesRouter = router({
+  list: protectedProcedure.query(async () => {
+    await seedSeoTemplates();
+    return getSeoTemplates();
+  }),
+
+  get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    return getSeoTemplateById(input.id);
+  }),
+
+  create: protectedProcedure.input(z.object({
+    name: z.string().min(1),
+    type: z.enum(["informational", "howto", "comparison", "listicle", "local"]),
+    description: z.string().optional(),
+    structure: z.any(),
+    promptTemplate: z.string().optional(),
+    minWords: z.number().default(800),
+    maxWords: z.number().default(1500),
+  })).mutation(async ({ input }) => {
+    await createSeoTemplate({ ...input, isPreset: false, isActive: true });
+    return { success: true };
+  }),
+
+  update: protectedProcedure.input(z.object({
+    id: z.number(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    structure: z.any().optional(),
+    promptTemplate: z.string().optional(),
+    minWords: z.number().optional(),
+    maxWords: z.number().optional(),
+    isActive: z.boolean().optional(),
+  })).mutation(async ({ input }) => {
+    const { id, ...data } = input;
+    await updateSeoTemplate(id, data);
+    return { success: true };
+  }),
+
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    await deleteSeoTemplate(input.id);
+    return { success: true };
+  }),
+
+  generateWithTemplate: protectedProcedure.input(z.object({
+    templateId: z.number(),
+    keyword: z.string().min(1),
+    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    internalLinks: z.array(z.object({ url: z.string(), anchorText: z.string() })).optional(),
+    externalLinks: z.array(z.object({ url: z.string(), anchorText: z.string() })).optional(),
+  })).mutation(async ({ input }) => {
+    const template = await getSeoTemplateById(input.templateId);
+    if (!template) throw new Error("模板不存在");
+    const langLabel = input.language === "zh-CN" ? "中文（简体）" : input.language === "zh-TW" ? "中文（繁体）" : "English";
+    const promptTemplate = (template.promptTemplate ?? "").replace("{keyword}", input.keyword).replace("{language}", langLabel).replace("{minWords}", String(template.minWords ?? 800));
+    let linkHint = "";
+    if (input.internalLinks && input.internalLinks.length > 0) {
+      linkHint += `\n\n请在文章末尾的「相关文章」部分插入以下内链：\n${input.internalLinks.map(l => `- [${l.anchorText}](${l.url})`).join("\n")}`;
+    }
+    if (input.externalLinks && input.externalLinks.length > 0) {
+      linkHint += `\n\n请在文章末尾的「参考资料」部分插入以下外链：\n${input.externalLinks.map(l => `- [${l.anchorText}](${l.url})`).join("\n")}`;
+    }
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: promptTemplate },
+        { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
+      ],
+    });
+    const rawContent = response.choices?.[0]?.message?.content ?? "";
+    const content = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+    const wordCount = content.replace(/\s+/g, "").length;
+    const plainText = content.replace(/#{1,6}\s/g, "").replace(/\*\*/g, "").replace(/\n+/g, " ").trim();
+    const metaDescription = plainText.slice(0, 157) + (plainText.length > 157 ? "..." : "");
+    const urlSlug = input.keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u4e00-\u9fa5-]/g, "").slice(0, 60);
+    await createMaterial({
+      title: `${input.keyword} - SEO文章`,
+      keyword: input.keyword,
+      language: input.language,
+      content,
+      wordCount,
+      qualityScore: Math.min(95, 60 + wordCount / 50),
+      status: "pending",
+      seoTemplateId: input.templateId,
+      metaDescription,
+      urlSlug,
+      internalLinks: input.internalLinks ?? [],
+      externalLinks: input.externalLinks ?? [],
+    });
+    await updateSeoTemplate(input.templateId, { usageCount: (template.usageCount ?? 0) + 1 });
+    return { success: true, content, wordCount, metaDescription, urlSlug };
+  }),
+});
+
+// ─── Google Sites Management ──────────────────────────────────────────────────
+const sitesRouter = router({
+  list: protectedProcedure.input(z.object({ accountId: z.number().optional() }).optional()).query(async ({ input }) => {
+    return getGoogleSites(input?.accountId);
+  }),
+
+  get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    return getGoogleSiteById(input.id);
+  }),
+
+  create: protectedProcedure.input(z.object({
+    accountId: z.number(),
+    siteName: z.string().min(1),
+    siteUrl: z.string().optional(),
+    customDomain: z.string().optional(),
+    category: z.string().optional(),
+    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    notes: z.string().optional(),
+  })).mutation(async ({ input }) => {
+    await createGoogleSite({ ...input, status: "active" });
+    return { success: true };
+  }),
+
+  update: protectedProcedure.input(z.object({
+    id: z.number(),
+    siteName: z.string().optional(),
+    siteUrl: z.string().optional(),
+    customDomain: z.string().optional(),
+    category: z.string().optional(),
+    status: z.enum(["active", "inactive", "suspended"]).optional(),
+    gscVerified: z.boolean().optional(),
+    gscSiteUrl: z.string().optional(),
+    notes: z.string().optional(),
+  })).mutation(async ({ input }) => {
+    const { id, ...data } = input;
+    await updateGoogleSite(id, data);
+    return { success: true };
+  }),
+
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    await deleteGoogleSite(input.id);
+    return { success: true };
+  }),
+});
+
+// ─── Publisher Engine ─────────────────────────────────────────────────────────
+const publisherRouter = router({
+  verifyCookie: protectedProcedure.input(z.object({
+    accountId: z.number(),
+  })).mutation(async ({ input }) => {
+    const account = await getAccountById(input.accountId);
+    if (!account) throw new Error("账号不存在");
+    if (!account.cookieParsed) throw new Error("该账号没有解析好的 Cookie，请重新导入");
+    const proxyConfig = account.proxyConfig as any;
+    const result = await googleSitesPublisher.verifyCookie(
+      account.cookieParsed as any[],
+      proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password } : undefined
+    );
+    await updateAccount(input.accountId, {
+      status: result.valid ? "online" : "expired",
+      lastVerifiedAt: new Date(),
+      ...(result.email ? { email: result.email } : {}),
+    });
+    return { success: true, valid: result.valid, email: result.email, log: result.log };
+  }),
+
+  executeTask: protectedProcedure.input(z.object({
+    taskId: z.number(),
+  })).mutation(async ({ input }) => {
+    const tasks = await getPublishTasks();
+    const task = tasks.find(t => t.id === input.taskId);
+    if (!task) throw new Error("任务不存在");
+    if (!task.materialId) throw new Error("任务没有关联素材");
+    const account = await getAccountById(task.accountId);
+    if (!account) throw new Error("账号不存在");
+    if (!account.cookieParsed) throw new Error("账号没有有效 Cookie");
+    const material = await getMaterialById(task.materialId);
+    if (!material) throw new Error("素材不存在");
+    let siteUrl: string | undefined;
+    if (task.siteId) {
+      const site = await getGoogleSiteById(task.siteId);
+      siteUrl = site?.siteUrl ?? undefined;
+    } else if (account.defaultSiteUrl) {
+      siteUrl = account.defaultSiteUrl;
+    }
+    await updatePublishTask(input.taskId, { status: "running", startedAt: new Date() });
+    const proxyConfig = account.proxyConfig as any;
+    try {
+      const result = await googleSitesPublisher.publish({
+        cookieParsed: account.cookieParsed as any[],
+        siteName: account.defaultSiteName ?? "gsp-site",
+        title: material.title,
+        content: material.content,
+        siteUrl,
+        proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password } : undefined,
+        headless: true,
+        timeout: 120000,
+      });
+      if (result.success) {
+        await updatePublishTask(input.taskId, {
+          status: "success",
+          completedAt: new Date(),
+          publishedUrl: result.publishedUrl,
+          engineLog: result.log.join("\n"),
+        });
+        await updateMaterial(task.materialId, { status: "published" });
+        if (result.publishedUrl) {
+          await createIndexingRecord({
+            publishedUrl: result.publishedUrl,
+            title: material.title,
+            keyword: material.keyword ?? undefined,
+            accountId: task.accountId,
+            siteId: task.siteId ?? undefined,
+            taskId: input.taskId,
+            indexStatus: "pending",
+          });
+        }
+        return { success: true, publishedUrl: result.publishedUrl, log: result.log };
+      } else {
+        await updatePublishTask(input.taskId, {
+          status: "failed",
+          completedAt: new Date(),
+          errorMessage: result.errorMessage,
+          engineLog: result.log.join("\n"),
+          retryCount: (task.retryCount ?? 0) + 1,
+        });
+        return { success: false, errorMessage: result.errorMessage, log: result.log };
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await updatePublishTask(input.taskId, { status: "failed", completedAt: new Date(), errorMessage: msg });
+      throw error;
+    }
+  }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -595,6 +827,9 @@ export const appRouter = router({
   hyperlinks: hyperlinksRouter,
   indexing: indexingRouter,
   settings: settingsRouter,
+  seoTemplates: seoTemplatesRouter,
+  sites: sitesRouter,
+  publisher: publisherRouter,
 });
 
 export type AppRouter = typeof appRouter;
