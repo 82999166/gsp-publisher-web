@@ -288,12 +288,12 @@ export default function Accounts() {
 
       {/* Add Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="max-w-lg flex flex-col" style={{ maxHeight: "90vh" }}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>添加账号</DialogTitle>
             <DialogDescription>配置 Google Sites 账号的 Cookie 认证信息</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="overflow-y-auto flex-1 pr-1 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label>账号名称 <span className="text-destructive">*</span></Label>
@@ -316,7 +316,7 @@ export default function Accounts() {
               <Label>Cookie 数据 <span className="text-destructive">*</span></Label>
               <Textarea
                 placeholder="粘贴 JSON 格式 Cookie（推荐）或原始 Cookie 字符串"
-                className="font-mono text-xs h-28 resize-none"
+                className="font-mono text-xs h-40 resize-y"
                 value={form.cookieRaw}
                 onChange={e => setForm(f => ({ ...f, cookieRaw: e.target.value }))}
               />
@@ -328,7 +328,7 @@ export default function Accounts() {
                 <Input
                   type="number"
                   min={1}
-                  max={50}
+                  max={500}
                   value={form.dailyLimit}
                   onChange={e => setForm(f => ({ ...f, dailyLimit: parseInt(e.target.value) || 5 }))}
                 />
@@ -356,7 +356,7 @@ export default function Accounts() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 pt-4 border-t mt-2">
             <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>取消</Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending ? "添加中..." : "添加账号"}
