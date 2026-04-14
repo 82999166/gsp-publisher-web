@@ -6,6 +6,7 @@ import fs from "fs";
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page } from "puppeteer-core";
+import type { BrowserFingerprint } from "./fingerprint.js";
 
 // 自动检测 Chromium 可执行文件路径（优先使用真实二进制，而非 shell 包装器）
 function detectChromiumPath(): string {
@@ -44,7 +45,9 @@ export interface PublishOptions {
   /** 目标 Site 的完整 URL（如已存在），为空则自动创建新 Site */
   siteUrl?: string;
   /** 代理配置（可选） */
-  proxy?: { host: string; port: number; username?: string; password?: string };
+  proxy?: { host: string; port: number; username?: string; password?: string; protocol?: string };
+  /** 浏览器指纹（可选，用于防关联） */
+  fingerprint?: BrowserFingerprint;
   /** 是否无头模式（默认 true） */
   headless?: boolean;
   /** 操作超时（毫秒，默认 120000） */
@@ -135,27 +138,40 @@ export class GoogleSitesPublisher {
     console.log(`[GSP Publisher] ${msg}`);
   }
 
-  /** 启动浏览器 */
+  /** 启动浏览器（应用账号独立指纹和代理） */
   private async launchBrowser(options: PublishOptions): Promise<Browser> {
+    const fp = options.fingerprint;
+    const windowW = fp?.windowWidth ?? 1280;
+    const windowH = fp?.windowHeight ?? 800;
+    const lang = fp?.language ?? "zh-CN,zh";
+
     const args = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-blink-features=AutomationControlled",
       "--disable-infobars",
-      "--window-size=1280,800",
-      "--lang=zh-CN,zh",
+      `--window-size=${windowW},${windowH}`,
+      `--lang=${lang}`,
+      // 防指纹检测相关参数
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-site-isolation-trials",
     ];
 
+    if (fp?.timezone) {
+      args.push(`--timezone=${fp.timezone}`);
+    }
+
     if (options.proxy) {
-      args.push(`--proxy-server=${options.proxy.host}:${options.proxy.port}`);
+      const protocol = options.proxy.protocol ?? "http";
+      args.push(`--proxy-server=${protocol}://${options.proxy.host}:${options.proxy.port}`);
     }
 
     const browser = await puppeteerExtra.launch({
       executablePath: CHROMIUM_PATH,
       headless: options.headless !== false,
       args,
-      defaultViewport: { width: 1280, height: 800 },
+      defaultViewport: { width: windowW, height: windowH },
       timeout: options.timeout ?? 120000,
     } as any);
 
@@ -358,10 +374,37 @@ export class GoogleSitesPublisher {
       this.browser = await this.launchBrowser(options);
       const page = await this.browser.newPage();
 
-      // 设置 User-Agent（模拟真实浏览器）
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
+      const fp = options.fingerprint;
+
+      // 应用账号独立指纹：User-Agent
+      const userAgent = fp?.userAgent ??
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+      await page.setUserAgent(userAgent);
+
+      // 注入指纹覆盖（覆盖 navigator 属性，防止 Google 检测自动化和设备指纹）
+      if (fp) {
+        await page.evaluateOnNewDocument((fingerprint) => {
+          // 覆盖 navigator.platform
+          Object.defineProperty(navigator, 'platform', { get: () => fingerprint.platform });
+          // 覆盖 navigator.language
+          Object.defineProperty(navigator, 'language', { get: () => fingerprint.language });
+          Object.defineProperty(navigator, 'languages', { get: () => [fingerprint.language, 'en'] });
+          // 覆盖 navigator.hardwareConcurrency
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => fingerprint.hardwareConcurrency });
+          // 覆盖 navigator.deviceMemory
+          Object.defineProperty(navigator, 'deviceMemory', { get: () => fingerprint.deviceMemory });
+          // 覆盖屏幕分辨率
+          Object.defineProperty(screen, 'width', { get: () => fingerprint.screenWidth });
+          Object.defineProperty(screen, 'height', { get: () => fingerprint.screenHeight });
+          Object.defineProperty(screen, 'colorDepth', { get: () => fingerprint.colorDepth });
+          // 隐藏自动化标识
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          // 删除 chrome.runtime 中的自动化标识
+          if ((window as any).chrome) {
+            (window as any).chrome.runtime = {};
+          }
+        }, fp);
+      }
 
       // 代理认证
       if (options.proxy?.username && options.proxy?.password) {

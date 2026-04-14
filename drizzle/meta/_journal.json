@@ -43,6 +43,13 @@
       "when": 1776178210386,
       "tag": "0005_broad_kingpin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1776181010662,
+      "tag": "0006_open_beyonder",
+      "breakpoints": true
     }
   ]
 }

@@ -31,10 +31,13 @@ import {
   ChevronDown,
   ChevronUp,
   Edit2,
+  Fingerprint,
+  Globe,
   HelpCircle,
   KeyRound,
   Plus,
   RefreshCw,
+  Shield,
   Trash2,
   User,
   XCircle,
@@ -53,9 +56,26 @@ type Account = {
   cookieRaw: string;
   lastVerifiedAt?: Date | null;
   createdAt?: Date | null;
+  proxyConfig?: any;
+  browserFingerprint?: any;
 };
 
-type EditForm = Account & { newCookieRaw: string; showCookieField: boolean; };
+type ProxyForm = {
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+  protocol: "http" | "https" | "socks5";
+};
+
+type EditForm = Account & {
+  newCookieRaw: string;
+  showCookieField: boolean;
+  showProxyField: boolean;
+  showFingerprintField: boolean;
+  proxyForm: ProxyForm;
+  proxyEnabled: boolean;
+};
 
 const statusLabel: Record<string, string> = {
   online: "正常",
@@ -71,7 +91,18 @@ const siteAgeLabel: Record<string, string> = {
 };
 
 function AccountStatusBadge({ status }: { status: string }) {
-  return <span className={`badge-${status}`}>{statusLabel[status] ?? status}</span>;
+  const colors: Record<string, string> = {
+    online: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    expired: "bg-red-100 text-red-700 border-red-200",
+    pending: "bg-amber-100 text-amber-700 border-amber-200",
+    error: "bg-red-100 text-red-700 border-red-200",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium ${colors[status] ?? "bg-muted text-muted-foreground border-border"}`}>
+      {status === "online" ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+      {statusLabel[status] ?? status}
+    </span>
+  );
 }
 
 function HelpTooltip() {
@@ -92,13 +123,37 @@ function HelpTooltip() {
           <div className="text-sm text-muted-foreground space-y-3">
             <p><strong className="text-foreground">1. 添加账号：</strong>点击「添加账号」按钮，填写账号名称和 Cookie 信息。</p>
             <p><strong className="text-foreground">2. Cookie 格式：</strong>支持 JSON 数组格式（推荐使用 Cookie-Editor 等插件导出）或原始 Cookie 字符串。</p>
-            <p><strong className="text-foreground">3. 验证 Cookie：</strong>点击「验证」按钮检测 Cookie 是否有效，系统会自动更新账号状态。</p>
-            <p><strong className="text-foreground">4. 每日限制：</strong>建议新站每日发布不超过 5 篇，成熟站可适当提高。</p>
-            <p><strong className="text-foreground">5. 站点年龄：</strong>影响发布策略，新站需要更保守的发布节奏。</p>
+            <p><strong className="text-foreground">3. 代理 IP：</strong>为每个账号配置独立代理，防止 Google 关联多账号。支持 HTTP/HTTPS/SOCKS5 协议。</p>
+            <p><strong className="text-foreground">4. 浏览器指纹：</strong>每个账号自动生成独立浏览器指纹（UA、分辨率、时区等），防止 Google 识别多账号关联。</p>
+            <p><strong className="text-foreground">5. 每日限制：</strong>建议新站每日发布不超过 5 篇，成熟站可适当提高。</p>
           </div>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function FingerprintBadge({ fingerprint }: { fingerprint: any }) {
+  if (!fingerprint) {
+    return <span className="text-xs text-muted-foreground">未生成</span>;
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <Shield className="h-3 w-3 text-blue-500" />
+      <span className="text-xs text-blue-600 font-mono">{fingerprint.id?.slice(0, 8) ?? "已配置"}</span>
+    </div>
+  );
+}
+
+function ProxyBadge({ proxy }: { proxy: any }) {
+  if (!proxy) {
+    return <span className="text-xs text-muted-foreground">未配置</span>;
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <Globe className="h-3 w-3 text-purple-500" />
+      <span className="text-xs text-purple-600">{proxy.protocol ?? "http"}://{proxy.host}:{proxy.port}</span>
+    </div>
   );
 }
 
@@ -154,7 +209,18 @@ export default function Accounts() {
   }
 
   function openEdit(account: Account) {
-    setEditAccount({ ...account, newCookieRaw: "", showCookieField: false });
+    const proxy = account.proxyConfig as any;
+    setEditAccount({
+      ...account,
+      newCookieRaw: "",
+      showCookieField: false,
+      showProxyField: false,
+      showFingerprintField: false,
+      proxyEnabled: !!proxy,
+      proxyForm: proxy
+        ? { host: proxy.host ?? "", port: String(proxy.port ?? ""), username: proxy.username ?? "", password: proxy.password ?? "", protocol: proxy.protocol ?? "http" }
+        : { host: "", port: "", username: "", password: "", protocol: "http" },
+    });
     setEditDialogOpen(true);
   }
 
@@ -175,7 +241,6 @@ export default function Accounts() {
 
   function handleUpdate() {
     if (!editAccount) return;
-    // 如果填写了新 Cookie，先验证格式
     if (editAccount.newCookieRaw.trim()) {
       try {
         const parsed = JSON.parse(editAccount.newCookieRaw.trim());
@@ -187,6 +252,24 @@ export default function Accounts() {
         // 允许原始字符串格式
       }
     }
+
+    // 构建代理配置
+    let proxyConfig: any = null;
+    if (editAccount.proxyEnabled && editAccount.proxyForm.host.trim()) {
+      const port = parseInt(editAccount.proxyForm.port);
+      if (!port || port < 1 || port > 65535) {
+        toast.error("代理端口格式错误（1-65535）");
+        return;
+      }
+      proxyConfig = {
+        host: editAccount.proxyForm.host.trim(),
+        port,
+        username: editAccount.proxyForm.username.trim() || undefined,
+        password: editAccount.proxyForm.password.trim() || undefined,
+        protocol: editAccount.proxyForm.protocol,
+      };
+    }
+
     updateMutation.mutate({
       id: editAccount.id,
       name: editAccount.name,
@@ -195,7 +278,21 @@ export default function Accounts() {
       dailyLimit: editAccount.dailyLimit,
       siteAge: editAccount.siteAge as any,
       notes: editAccount.notes ?? undefined,
+      proxyConfig: editAccount.proxyEnabled ? proxyConfig : null,
     });
+  }
+
+  function handleResetFingerprint() {
+    if (!editAccount) return;
+    updateMutation.mutate(
+      { id: editAccount.id, resetFingerprint: true },
+      {
+        onSuccess: () => {
+          utils.accounts.list.invalidate();
+          toast.success("浏览器指纹已重新生成");
+        },
+      }
+    );
   }
 
   return (
@@ -204,7 +301,7 @@ export default function Accounts() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">账号管理</h1>
-          <p className="text-sm text-muted-foreground mt-1">管理 Google Sites 账号与 Cookie 认证信息</p>
+          <p className="text-sm text-muted-foreground mt-1">管理 Google Sites 账号，配置独立代理和浏览器指纹防关联</p>
         </div>
         <div className="flex items-center gap-2">
           <HelpTooltip />
@@ -221,7 +318,7 @@ export default function Accounts() {
           { label: "全部账号", value: accounts.length, color: "text-foreground" },
           { label: "正常", value: accounts.filter(a => a.status === "online").length, color: "text-emerald-600" },
           { label: "已过期", value: accounts.filter(a => a.status === "expired").length, color: "text-red-600" },
-          { label: "待验证", value: accounts.filter(a => a.status === "pending").length, color: "text-amber-600" },
+          { label: "已配置代理", value: accounts.filter(a => (a as any).proxyConfig).length, color: "text-purple-600" },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-xl border border-border p-4 shadow-sm">
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -245,8 +342,9 @@ export default function Accounts() {
             <TableHeader>
               <TableRow>
                 <TableHead>账号名称</TableHead>
-                <TableHead>邮箱</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead>代理 IP</TableHead>
+                <TableHead>浏览器指纹</TableHead>
                 <TableHead>每日限制</TableHead>
                 <TableHead>站点类型</TableHead>
                 <TableHead>最后验证</TableHead>
@@ -258,12 +356,16 @@ export default function Accounts() {
                 <TableRow key={account.id}>
                   <TableCell>
                     <div className="font-medium text-foreground">{account.name}</div>
-                    {account.notes && (
-                      <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[180px]">{account.notes}</div>
+                    {account.email && (
+                      <div className="text-xs text-muted-foreground mt-0.5">{account.email}</div>
+                    )}
+                    {(account as any).notes && (
+                      <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[160px]">{(account as any).notes}</div>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{account.email ?? "—"}</TableCell>
                   <TableCell><AccountStatusBadge status={account.status} /></TableCell>
+                  <TableCell><ProxyBadge proxy={(account as any).proxyConfig} /></TableCell>
+                  <TableCell><FingerprintBadge fingerprint={(account as any).browserFingerprint} /></TableCell>
                   <TableCell className="text-sm tabular-nums">{account.dailyLimit} 篇/天</TableCell>
                   <TableCell className="text-sm">{siteAgeLabel[account.siteAge] ?? account.siteAge}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -394,12 +496,13 @@ export default function Accounts() {
       {/* Edit Dialog */}
       {editAccount && (
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-lg flex flex-col" style={{ maxHeight: "90vh" }}>
+          <DialogContent className="max-w-xl flex flex-col" style={{ maxHeight: "92vh" }}>
             <DialogHeader className="shrink-0">
-              <DialogTitle>编辑账号</DialogTitle>
-              <DialogDescription>修改账号信息，如需更新 Cookie 请展开 Cookie 修改区域</DialogDescription>
+              <DialogTitle>编辑账号 — {editAccount.name}</DialogTitle>
+              <DialogDescription>修改账号信息、代理 IP 和浏览器指纹配置</DialogDescription>
             </DialogHeader>
             <div className="overflow-y-auto flex-1 pr-1 space-y-4">
+              {/* 基本信息 */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>账号名称</Label>
@@ -486,6 +589,157 @@ export default function Accounts() {
                       onChange={e => setEditAccount(a => a ? { ...a, newCookieRaw: e.target.value } : a)}
                     />
                     <p className="text-xs text-muted-foreground">留空则不修改现有 Cookie</p>
+                  </div>
+                )}
+              </div>
+
+              {/* 代理 IP 配置区域 */}
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-4 py-3 bg-muted/40 hover:bg-muted/60 transition-colors text-sm font-medium"
+                  onClick={() => setEditAccount(a => a ? { ...a, showProxyField: !a.showProxyField } : a)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-purple-600" />
+                    <span>代理 IP 配置</span>
+                    {editAccount.proxyEnabled && editAccount.proxyForm.host && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+                        {editAccount.proxyForm.protocol}://{editAccount.proxyForm.host}:{editAccount.proxyForm.port}
+                      </span>
+                    )}
+                    {!editAccount.proxyEnabled && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">未启用</span>
+                    )}
+                  </div>
+                  {editAccount.showProxyField
+                    ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </button>
+                {editAccount.showProxyField && (
+                  <div className="p-4 space-y-3 border-t border-border">
+                    <div className="text-xs text-muted-foreground bg-purple-50 border border-purple-200 rounded p-3">
+                      <p className="font-medium text-purple-800 mb-1">为什么需要代理 IP？</p>
+                      <p>Google 会检测来自数据中心 IP 的请求并拒绝 Cookie 登录。配置住宅代理（Residential Proxy）可让发布请求从真实家庭 IP 发出，有效避免封号。</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="proxyEnabled"
+                        checked={editAccount.proxyEnabled}
+                        onChange={e => setEditAccount(a => a ? { ...a, proxyEnabled: e.target.checked } : a)}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                      <Label htmlFor="proxyEnabled" className="cursor-pointer">启用代理</Label>
+                    </div>
+                    {editAccount.proxyEnabled && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2 space-y-1.5">
+                            <Label className="text-xs">代理主机</Label>
+                            <Input
+                              placeholder="如：proxy.example.com 或 1.2.3.4"
+                              value={editAccount.proxyForm.host}
+                              onChange={e => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, host: e.target.value } } : a)}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">端口</Label>
+                            <Input
+                              placeholder="如：1080"
+                              value={editAccount.proxyForm.port}
+                              onChange={e => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, port: e.target.value } } : a)}
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">协议</Label>
+                          <Select
+                            value={editAccount.proxyForm.protocol}
+                            onValueChange={v => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, protocol: v as any } } : a)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="http">HTTP</SelectItem>
+                              <SelectItem value="https">HTTPS</SelectItem>
+                              <SelectItem value="socks5">SOCKS5</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">用户名（可选）</Label>
+                            <Input
+                              placeholder="代理用户名"
+                              value={editAccount.proxyForm.username}
+                              onChange={e => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, username: e.target.value } } : a)}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">密码（可选）</Label>
+                            <Input
+                              type="password"
+                              placeholder="代理密码"
+                              value={editAccount.proxyForm.password}
+                              onChange={e => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, password: e.target.value } } : a)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 浏览器指纹区域 */}
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-4 py-3 bg-muted/40 hover:bg-muted/60 transition-colors text-sm font-medium"
+                  onClick={() => setEditAccount(a => a ? { ...a, showFingerprintField: !a.showFingerprintField } : a)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Fingerprint className="h-4 w-4 text-blue-600" />
+                    <span>浏览器指纹</span>
+                    {editAccount.browserFingerprint ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200">
+                        已配置 · {(editAccount.browserFingerprint as any).id?.slice(0, 8) ?? "独立指纹"}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">未生成</span>
+                    )}
+                  </div>
+                  {editAccount.showFingerprintField
+                    ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </button>
+                {editAccount.showFingerprintField && (
+                  <div className="p-4 space-y-3 border-t border-border">
+                    <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded p-3">
+                      <p className="font-medium text-blue-800 mb-1">浏览器指纹防关联</p>
+                      <p>每个账号使用独立的浏览器指纹（User-Agent、屏幕分辨率、时区、语言、硬件配置等），防止 Google 通过设备特征识别多账号关联。</p>
+                    </div>
+                    {editAccount.browserFingerprint && (
+                      <div className="text-xs font-mono bg-muted/50 rounded p-3 space-y-1 text-muted-foreground">
+                        <p><span className="text-foreground">UA：</span>{(editAccount.browserFingerprint as any).userAgent?.slice(0, 60)}...</p>
+                        <p><span className="text-foreground">分辨率：</span>{(editAccount.browserFingerprint as any).screenWidth}×{(editAccount.browserFingerprint as any).screenHeight}</p>
+                        <p><span className="text-foreground">时区：</span>{(editAccount.browserFingerprint as any).timezone}</p>
+                        <p><span className="text-foreground">语言：</span>{(editAccount.browserFingerprint as any).language}</p>
+                        <p><span className="text-foreground">平台：</span>{(editAccount.browserFingerprint as any).platform}</p>
+                      </div>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 w-full"
+                      onClick={handleResetFingerprint}
+                      disabled={updateMutation.isPending}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {editAccount.browserFingerprint ? "重新生成指纹" : "生成独立指纹"}
+                    </Button>
                   </div>
                 )}
               </div>

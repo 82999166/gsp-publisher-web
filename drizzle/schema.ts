@@ -42,7 +42,8 @@ export const accounts = mysqlTable("accounts", {
   // Google Sites 相关
   defaultSiteUrl: varchar("defaultSiteUrl", { length: 1024 }),  // 默认发布到的 Site URL
   defaultSiteName: varchar("defaultSiteName", { length: 256 }), // 默认 Site 名称
-  proxyConfig: json("proxyConfig"),  // 该账号专属代理配置 {host, port, username, password}
+  proxyConfig: json("proxyConfig"),  // 该账号专属代理配置 {host, port, username, password, protocol}
+  browserFingerprint: json("browserFingerprint"), // 该账号专属浏览器指纹 {userAgent, screenWidth, screenHeight, timezone, language, platform, colorDepth, hardwareConcurrency, deviceMemory}
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

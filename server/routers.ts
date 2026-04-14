@@ -21,6 +21,7 @@ import {
   createLog, getLogs, getLogCount, clearLogs,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
+import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -80,8 +81,19 @@ const accountsRouter = router({
     siteAge: z.enum(["new_site", "growing", "mature"]).optional(),
     status: z.enum(["online", "expired", "pending", "error"]).optional(),
     notes: z.string().optional(),
+    defaultSiteUrl: z.string().optional(),
+    defaultSiteName: z.string().optional(),
+    proxyConfig: z.object({
+      host: z.string(),
+      port: z.number(),
+      username: z.string().optional(),
+      password: z.string().optional(),
+      protocol: z.enum(["http", "https", "socks5"]).optional(),
+    }).nullable().optional(),
+    browserFingerprint: z.any().optional(), // JSON 指纹对象
+    resetFingerprint: z.boolean().optional(), // 是否重新生成指纹
   })).mutation(async ({ input }) => {
-    const { id, ...data } = input;
+    const { id, resetFingerprint, ...data } = input;
     if (data.cookieRaw) {
       try {
         const parsed = JSON.parse(data.cookieRaw);
@@ -90,7 +102,12 @@ const accountsRouter = router({
         }
       } catch {}
     }
-    await updateAccount(id, data);
+    // 重新生成指纹
+    if (resetFingerprint) {
+      const { generateFingerprint } = await import("./fingerprint.js");
+      (data as any).browserFingerprint = generateFingerprint(id);
+    }
+    await updateAccount(id, data as any);
     return { success: true };
   }),
 
@@ -1015,6 +1032,7 @@ const publisherRouter = router({
     }
     await updatePublishTask(input.taskId, { status: "running", startedAt: new Date() });
     const proxyConfig = account.proxyConfig as any;
+    const fingerprintData = account.browserFingerprint as any;
     try {
       const result = await googleSitesPublisher.publish({
         cookieParsed: account.cookieParsed as any[],
@@ -1022,7 +1040,8 @@ const publisherRouter = router({
         title: material.title,
         content: material.content,
         siteUrl,
-        proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password } : undefined,
+        proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
+        fingerprint: fingerprintData ?? generateFingerprint(account.id),
         headless: true,
         timeout: 120000,
       });
