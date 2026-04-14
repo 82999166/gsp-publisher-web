@@ -15,6 +15,7 @@ import PublishTasks from "./pages/PublishTasks";
 import Settings from "./pages/Settings";
 import SeoTemplates from "./pages/SeoTemplates";
 import GoogleSites from "./pages/GoogleSites";
+import BatchGeneration from "./pages/BatchGeneration";
 
 function Router() {
   return (
@@ -30,6 +31,7 @@ function Router() {
         <Route path="/settings" component={Settings} />
         <Route path="/seo-templates" component={SeoTemplates} />
         <Route path="/sites" component={GoogleSites} />
+        <Route path="/batch-generation" component={BatchGeneration} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

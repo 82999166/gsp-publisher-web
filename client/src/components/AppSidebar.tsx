@@ -32,6 +32,7 @@ import {
   Zap,
   FileText,
   MonitorCheck,
+  Layers,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -53,6 +54,7 @@ const menuGroups = [
     label: "内容生产",
     items: [
       { icon: Sparkles, label: "AI内容生成", path: "/ai-content" },
+      { icon: Layers, label: "批量生成", path: "/batch-generation" },
       { icon: FileText, label: "SEO 文章模板", path: "/seo-templates" },
       { icon: Image, label: "素材库管理", path: "/materials" },
     ],

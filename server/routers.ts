@@ -17,6 +17,13 @@ import {
   getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
+import {
+  getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
+  getGenerationItems, createGenerationItems, getGenerationBatchProgress,
+} from "./db";
+import {
+  startBatchWorker, pauseBatchWorker, resumeBatchWorker, cancelBatchWorker, isBatchWorkerActive,
+} from "./batchGenerationWorker";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
@@ -808,9 +815,125 @@ const publisherRouter = router({
   }),
 });
 
-// ─── App Router ───────────────────────────────────────────────────────────────
-export const appRouter = router({
-  system: systemRouter,
+// ─── Batch Generation ───────────────────────────────────────────────────────────────
+const batchGenerationRouter = router({
+  // 获取所有批次列表
+  list: protectedProcedure.query(async () => {
+    return getGenerationBatches();
+  }),
+
+  // 获取单个批次详情
+  get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    return getGenerationBatchById(input.id);
+  }),
+
+  // 获取批次进度
+  progress: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const batch = await getGenerationBatchById(input.id);
+    if (!batch) throw new Error("批次不存在");
+    const progress = await getGenerationBatchProgress(input.id);
+    return {
+      ...batch,
+      ...progress,
+      isWorkerActive: isBatchWorkerActive(input.id),
+    };
+  }),
+
+  // 获取批次条目列表
+  items: protectedProcedure.input(z.object({
+    batchId: z.number(),
+    status: z.string().optional(),
+  })).query(async ({ input }) => {
+    return getGenerationItems(input.batchId, input.status);
+  }),
+
+  // 创建批次并导入条目
+  create: protectedProcedure.input(z.object({
+    name: z.string().min(1),
+    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
+    minWords: z.number().default(800),
+    concurrency: z.number().min(1).max(10).default(3),
+    seoTemplateId: z.number().optional(),
+    autoPublish: z.boolean().default(false),
+    // 条目列表：每条包含 keyword（必填）和可选 title
+    items: z.array(z.object({
+      keyword: z.string().min(1),
+      title: z.string().optional(),
+      extraKeywords: z.array(z.string()).optional(),
+    })).min(1).max(50000),
+  })).mutation(async ({ input }) => {
+    const totalCount = input.items.length;
+    const batch = await createGenerationBatch({
+      name: input.name,
+      totalCount,
+      pendingCount: totalCount,
+      runningCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      status: "pending",
+      language: input.language,
+      style: input.style,
+      minWords: input.minWords,
+      concurrency: input.concurrency,
+      seoTemplateId: input.seoTemplateId,
+      autoPublish: input.autoPublish,
+    });
+    if (!batch) throw new Error("创建批次失败");
+
+    // 批量插入条目
+    await createGenerationItems(input.items.map((item, idx) => ({
+      batchId: batch.id,
+      rowIndex: idx,
+      keyword: item.keyword,
+      title: item.title ?? null,
+      extraKeywords: item.extraKeywords ?? [],
+      status: "pending" as const,
+      retryCount: 0,
+    })));
+
+    return { success: true, batchId: batch.id, totalCount };
+  }),
+
+  // 启动批次
+  start: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const batch = await getGenerationBatchById(input.id);
+    if (!batch) throw new Error("批次不存在");
+    if (batch.status === "running") return { success: true, message: "批次已在运行中" };
+    await startBatchWorker(input.id);
+    return { success: true, message: `批次已启动，并发数: ${batch.concurrency}` };
+  }),
+
+  // 暂停批次
+  pause: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    pauseBatchWorker(input.id);
+    return { success: true };
+  }),
+
+  // 继续批次
+  resume: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    resumeBatchWorker(input.id);
+    await updateGenerationBatch(input.id, { status: "running" });
+    return { success: true };
+  }),
+
+  // 取消批次
+  cancel: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    cancelBatchWorker(input.id);
+    await updateGenerationBatch(input.id, { status: "cancelled" });
+    return { success: true };
+  }),
+
+  // 删除批次
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    cancelBatchWorker(input.id);
+    await deleteGenerationBatch(input.id);
+    return { success: true };
+  }),
+});
+
+// ─── App Router ────────────────────────────────────────────────────────────────────────────────────
+export const appRouter = router({m: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -830,6 +953,7 @@ export const appRouter = router({
   seoTemplates: seoTemplatesRouter,
   sites: sitesRouter,
   publisher: publisherRouter,
+  batchGeneration: batchGenerationRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -1,0 +1,41 @@
+CREATE TABLE `generation_batches` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(256) NOT NULL,
+	`totalCount` int NOT NULL DEFAULT 0,
+	`pendingCount` int NOT NULL DEFAULT 0,
+	`runningCount` int NOT NULL DEFAULT 0,
+	`successCount` int NOT NULL DEFAULT 0,
+	`failedCount` int NOT NULL DEFAULT 0,
+	`status` enum('pending','running','paused','completed','cancelled') NOT NULL DEFAULT 'pending',
+	`language` enum('zh-CN','en','zh-TW') NOT NULL DEFAULT 'zh-CN',
+	`style` enum('informational','commercial','navigational') NOT NULL DEFAULT 'informational',
+	`seoTemplateId` int,
+	`minWords` int NOT NULL DEFAULT 800,
+	`concurrency` int NOT NULL DEFAULT 3,
+	`autoPublish` boolean DEFAULT false,
+	`startedAt` timestamp,
+	`completedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `generation_batches_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `generation_items` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`batchId` int NOT NULL,
+	`rowIndex` int NOT NULL,
+	`title` varchar(512),
+	`keyword` varchar(256) NOT NULL,
+	`extraKeywords` json,
+	`status` enum('pending','running','success','failed','skipped') NOT NULL DEFAULT 'pending',
+	`materialId` int,
+	`errorMessage` text,
+	`retryCount` int NOT NULL DEFAULT 0,
+	`generatedTitle` varchar(512),
+	`generatedWordCount` int,
+	`generatedQualityScore` float,
+	`startedAt` timestamp,
+	`completedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `generation_items_id` PRIMARY KEY(`id`)
+);
