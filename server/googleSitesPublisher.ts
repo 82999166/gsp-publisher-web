@@ -8,23 +8,46 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page } from "puppeteer-core";
 import type { BrowserFingerprint } from "./fingerprint.js";
 
-// 自动检测 Chromium 可执行文件路径（优先使用真实二进制，而非 shell 包装器）
+// 自动检测 Chromium 可执行文件路径
+// 优先级：puppeteer 内置 Chromium（~/.cache/puppeteer）> 系统安装的真实二进制 > 最终兜底
 function detectChromiumPath(): string {
+  // 1. 优先使用 puppeteer 内置 Chromium（生产环境最可靠，由 pnpm install 自动下载）
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const puppeteer = require("puppeteer");
+    const builtinPath = puppeteer.executablePath();
+    if (builtinPath) {
+      const stat = fs.statSync(builtinPath);
+      if (stat.isFile() && (stat.mode & 0o111)) {
+        console.log(`[Chromium] 使用 puppeteer 内置 Chromium: ${builtinPath}`);
+        return builtinPath;
+      }
+    }
+  } catch {
+    // puppeteer 未安装或路径无效，继续尝试系统路径
+  }
+
+  // 2. 回退到系统安装的 Chromium（只接受真实 ELF 二进制 >1MB，跳过 shell 包装器）
   const candidates = [
-    "/usr/lib/chromium-browser/chromium-browser", // Ubuntu 真实二进制
+    "/usr/lib/chromium-browser/chromium-browser", // Ubuntu 真实二进制（253MB）
     "/usr/bin/chromium",                          // Debian/Ubuntu 直接安装
     "/usr/bin/google-chrome-stable",              // Google Chrome stable
     "/usr/bin/google-chrome",                     // Google Chrome
     "/snap/bin/chromium",                         // Snap 包
-    "/usr/bin/chromium-browser",                  // 脚本包装器（兜底）
   ];
   for (const p of candidates) {
     try {
       const stat = fs.statSync(p);
-      if (stat.isFile() && (stat.mode & 0o111)) return p;
+      if (stat.isFile() && (stat.mode & 0o111) && stat.size > 1024 * 1024) {
+        console.log(`[Chromium] 使用系统 Chromium: ${p} (${Math.round(stat.size / 1024 / 1024)}MB)`);
+        return p;
+      }
     } catch {}
   }
-  return "/usr/bin/chromium-browser"; // 最终兜底
+
+  // 3. 最终兜底
+  console.warn(`[Chromium] 未找到有效 Chromium，使用兜底路径`);
+  return "/usr/bin/chromium-browser";
 }
 
 const CHROMIUM_PATH = detectChromiumPath();
