@@ -17,8 +17,10 @@ import {
   getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
   getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
   getGenerationItemsByBatch, createGenerationItems, updateGenerationItem, getPendingGenerationItems, countGenerationItems,
+  getPublishedPages, countPublishedPages, createPublishedPage, updatePublishedPage, deletePublishedPage, getPublishedPageStats,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
+import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
@@ -814,6 +816,7 @@ const publisherRouter = router({
         });
         await updateMaterial(task.materialId, { status: "published" });
         if (result.publishedUrl) {
+          // 保存收录监控记录
           await createIndexingRecord({
             publishedUrl: result.publishedUrl,
             title: material.title,
@@ -823,6 +826,42 @@ const publisherRouter = router({
             taskId: input.taskId,
             indexStatus: "pending",
           });
+          // 保存已发布链接记录
+          await createPublishedPage({
+            taskId: input.taskId,
+            materialId: task.materialId ?? undefined,
+            accountId: task.accountId,
+            siteId: task.siteId ?? undefined,
+            title: material.title,
+            keyword: material.keyword ?? undefined,
+            publishedUrl: result.publishedUrl,
+            siteUrl: task.siteId ? (await getGoogleSiteById(task.siteId))?.siteUrl ?? undefined : undefined,
+            language: material.language ?? "zh-CN",
+            wordCount: material.wordCount ?? undefined,
+            qualityScore: material.qualityScore ?? undefined,
+            indexStatus: "pending",
+            gscSubmitted: 0,
+          });
+          // GSC 自动提交（异步，不阻塞返回）
+          const gscKey = await getSettingByKey("gscServiceAccountKey");
+          const publishedUrlForGsc = result.publishedUrl;
+          if (gscKey?.value && publishedUrlForGsc) {
+            submitUrlToGsc(publishedUrlForGsc, gscKey.value).then(async (gscResult) => {
+              if (gscResult.success) {
+                // 通过 publishedUrl 查找记录并更新 GSC 提交状态
+                const pages = await getPublishedPages({ limit: 5 });
+                const page = (pages as Array<{ id: number; publishedUrl: string | null }>)
+                  .find(p => p.publishedUrl === publishedUrlForGsc);
+                if (page) {
+                  await updatePublishedPage(page.id, {
+                    gscSubmitted: 1,
+                    gscSubmittedAt: new Date(),
+                    gscResponse: gscResult.response,
+                  });
+                }
+              }
+            }).catch(() => {/* GSC 提交失败不影响发布结果 */});
+          }
         }
         return { success: true, publishedUrl: result.publishedUrl, log: result.log };
       } else {
@@ -1097,6 +1136,78 @@ const batchGenerationRouter = router({
   }),
 });
 
+// ─── Published Pages Router ─────────────────────────────────────────────────────────────────
+const publishedPagesRouter = router({
+  list: protectedProcedure.input(z.object({
+    keyword: z.string().optional(),
+    indexStatus: z.string().optional(),
+    accountId: z.number().optional(),
+    siteId: z.number().optional(),
+    limit: z.number().default(100),
+    offset: z.number().default(0),
+  })).query(async ({ input }) => {
+    return getPublishedPages(input);
+  }),
+  stats: protectedProcedure.query(async () => {
+    return getPublishedPageStats();
+  }),
+  count: protectedProcedure.query(async () => {
+    return countPublishedPages();
+  }),
+  create: protectedProcedure.input(z.object({
+    taskId: z.number().optional(),
+    materialId: z.number().optional(),
+    accountId: z.number().optional(),
+    siteId: z.number().optional(),
+    title: z.string().min(1),
+    keyword: z.string().optional(),
+    publishedUrl: z.string().url(),
+    siteUrl: z.string().optional(),
+    language: z.string().default("zh-CN"),
+    wordCount: z.number().optional(),
+    qualityScore: z.number().optional(),
+  })).mutation(async ({ input }) => {
+    await createPublishedPage(input);
+    return { success: true };
+  }),
+  update: protectedProcedure.input(z.object({
+    id: z.number(),
+    indexStatus: z.enum(["unknown", "indexed", "not_indexed", "pending"]).optional(),
+    gscSubmitted: z.number().optional(),
+    gscResponse: z.string().optional(),
+  })).mutation(async ({ input }) => {
+    const { id, ...data } = input;
+    await updatePublishedPage(id, data as any);
+    return { success: true };
+  }),
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    await deletePublishedPage(input.id);
+    return { success: true };
+  }),
+  exportCsv: protectedProcedure.input(z.object({
+    keyword: z.string().optional(),
+    indexStatus: z.string().optional(),
+  })).query(async ({ input }) => {
+    const pages = await getPublishedPages({ ...input, limit: 100000 });
+    // Return as CSV data
+    const headers = ["ID", "标题", "关键词", "发布URL", "站点URL", "语言", "字数", "质量分", "收录状态", "GSC已提交", "发布时间"];
+    const rows = pages.map((p: any) => [
+      p.id,
+      `"${(p.title ?? "").replace(/"/g, '""')}"`,
+      `"${(p.keyword ?? "").replace(/"/g, '""')}"`,
+      p.publishedUrl ?? "",
+      p.siteUrl ?? "",
+      p.language ?? "zh-CN",
+      p.wordCount ?? "",
+      p.qualityScore ?? "",
+      p.indexStatus ?? "unknown",
+      p.gscSubmitted ? "是" : "否",
+      p.publishedAt ? new Date(p.publishedAt).toLocaleString("zh-CN") : "",
+    ]);
+    const csv = [headers.join(","), ...rows.map((r: any[]) => r.join(","))].join("\n");
+    return { csv, total: pages.length };
+  }),
+});
 // ─── App Router ───────────────────────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -1120,6 +1231,7 @@ export const appRouter = router({
   sites: sitesRouter,
   publisher: publisherRouter,
   batchGeneration: batchGenerationRouter,
+  publishedPages: publishedPagesRouter,
 });
 
 export type AppRouter = typeof appRouter;

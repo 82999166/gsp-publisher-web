@@ -1,3 +1,4 @@
+import HelpButton from "@/components/HelpButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -277,9 +278,26 @@ export default function BatchGeneration() {
           <h1 className="text-xl font-bold text-foreground">批量生成</h1>
           <p className="text-sm text-muted-foreground mt-0.5">导入关键词和标题，批量 AI 生成文章，支持万级任务</p>
         </div>
-        <Button onClick={() => { setShowCreate(true); setStep("import"); }} className="gap-2">
-          <Plus className="h-4 w-4" /> 新建批次
-        </Button>
+        <div className="flex items-center gap-2">
+          <HelpButton
+            title="批量生成"
+            steps={[
+              { step: 1, title: "准备数据", desc: "准备 CSV 文件或文本，格式：每行一条，内容为「关键词」或「关键词,标题」" },
+              { step: 2, title: "新建批次", desc: "点击「新建批次」，选择导入方式（文本粘贴或 CSV 上传），解析预览数据" },
+              { step: 3, title: "配置生成参数", desc: "设置语言、最少字数、并发数、插入关键词和锚文本链接" },
+              { step: 4, title: "启动生成", desc: "确认批次后点击「启动」，后台自动运行，可随时暂停/继续" },
+              { step: 5, title: "查看结果", desc: "生成完成的文章自动保存到「素材库」，可直接加入发布队列" },
+            ]}
+            tips={[
+              "上万条任务建议并发数设为 3-5，防止 API 限流",
+              "CSV 格式：第一列关键词，第二列可选标题，无需表头",
+              "设置质量分阈值后，达标的文章自动进入发布队列",
+            ]}
+          />
+          <Button onClick={() => { setShowCreate(true); setStep("import"); }} className="gap-2">
+            <Plus className="h-4 w-4" /> 新建批次
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}

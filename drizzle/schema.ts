@@ -8,6 +8,7 @@ import {
   boolean,
   float,
   json,
+  tinyint,
 } from "drizzle-orm/mysql-core";
 
 // ─── 用户表 ───────────────────────────────────────────────────────────────────
@@ -269,3 +270,34 @@ export const generationItems = mysqlTable("generation_items", {
 });
 export type GenerationItem = typeof generationItems.$inferSelect;
 export type InsertGenerationItem = typeof generationItems.$inferInsert;
+
+// ─── 已发布页面记录表 ────────────────────────────────────────────────────────────
+export const publishedPages = mysqlTable("published_pages", {
+  id: int("id").autoincrement().primaryKey(),
+  // 关联信息
+  taskId: int("taskId"),           // 关联发布任务
+  materialId: int("materialId"),   // 关联素材
+  accountId: int("accountId"),     // 关联账号
+  siteId: int("siteId"),           // 关联 Google Site
+  // 页面信息
+  title: varchar("title", { length: 512 }).notNull(),
+  keyword: varchar("keyword", { length: 512 }),
+  publishedUrl: varchar("publishedUrl", { length: 1024 }).notNull(),  // 已发布的页面 URL
+  siteUrl: varchar("siteUrl", { length: 512 }),                        // Google Site 根 URL
+  language: varchar("language", { length: 20 }).default("zh-CN"),
+  wordCount: int("wordCount"),
+  qualityScore: float("qualityScore"),
+  // 收录状态
+  indexStatus: mysqlEnum("indexStatus", ["unknown", "indexed", "not_indexed", "pending"]).default("unknown"),
+  indexCheckedAt: timestamp("indexCheckedAt"),
+  // GSC 提交状态
+  gscSubmitted: tinyint("gscSubmitted").default(0),
+  gscSubmittedAt: timestamp("gscSubmittedAt"),
+  gscResponse: text("gscResponse"),
+  // 时间
+  publishedAt: timestamp("publishedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PublishedPage = typeof publishedPages.$inferSelect;
+export type InsertPublishedPage = typeof publishedPages.$inferInsert;

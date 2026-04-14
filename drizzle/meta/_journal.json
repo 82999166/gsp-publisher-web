@@ -29,6 +29,13 @@
       "when": 1776171355304,
       "tag": "0003_wise_shinko_yamashiro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1776172480432,
+      "tag": "0004_naive_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,23 @@
+CREATE TABLE `published_pages` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`taskId` int,
+	`materialId` int,
+	`accountId` int,
+	`siteId` int,
+	`title` varchar(512) NOT NULL,
+	`keyword` varchar(512),
+	`publishedUrl` varchar(1024) NOT NULL,
+	`siteUrl` varchar(512),
+	`language` varchar(20) DEFAULT 'zh-CN',
+	`wordCount` int,
+	`qualityScore` float,
+	`indexStatus` enum('unknown','indexed','not_indexed','pending') DEFAULT 'unknown',
+	`indexCheckedAt` timestamp,
+	`gscSubmitted` tinyint DEFAULT 0,
+	`gscSubmittedAt` timestamp,
+	`gscResponse` text,
+	`publishedAt` timestamp NOT NULL DEFAULT (now()),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `published_pages_id` PRIMARY KEY(`id`)
+);

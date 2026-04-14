@@ -13,6 +13,7 @@ import {
   googleSites, InsertGoogleSite,
   generationBatches, InsertGenerationBatch,
   generationItems, InsertGenerationItem,
+  publishedPages, InsertPublishedPage,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -600,5 +601,74 @@ export async function countGenerationItems(batchId: number) {
     else if (r.status === "failed") result.failed = Number(r.cnt);
     else if (r.status === "pending") result.pending = Number(r.cnt);
   }
+  return result;
+}
+
+// ─── 已发布页面记录 ────────────────────────────────────────────────────────────
+export async function getPublishedPages(opts?: {
+  keyword?: string;
+  indexStatus?: string;
+  accountId?: number;
+  siteId?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let q = db.select().from(publishedPages);
+  const conditions = [];
+  if (opts?.keyword) conditions.push(like(publishedPages.keyword, `%${opts.keyword}%`));
+  if (opts?.indexStatus) conditions.push(eq(publishedPages.indexStatus, opts.indexStatus as any));
+  if (opts?.accountId) conditions.push(eq(publishedPages.accountId, opts.accountId));
+  if (opts?.siteId) conditions.push(eq(publishedPages.siteId, opts.siteId));
+  if (conditions.length > 0) q = (q as any).where(and(...conditions));
+  return (q as any)
+    .orderBy(desc(publishedPages.publishedAt))
+    .limit(opts?.limit ?? 100)
+    .offset(opts?.offset ?? 0);
+}
+
+export async function countPublishedPages() {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ cnt: count() }).from(publishedPages);
+  return Number(rows[0]?.cnt ?? 0);
+}
+
+export async function createPublishedPage(data: InsertPublishedPage) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(publishedPages).values(data);
+}
+
+export async function updatePublishedPage(id: number, data: Partial<InsertPublishedPage>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(publishedPages).set(data).where(eq(publishedPages.id, id));
+}
+
+export async function deletePublishedPage(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(publishedPages).where(eq(publishedPages.id, id));
+}
+
+export async function getPublishedPageStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, indexed: 0, notIndexed: 0, pending: 0, gscSubmitted: 0 };
+  const rows = await db.select({
+    indexStatus: publishedPages.indexStatus,
+    cnt: count(),
+  }).from(publishedPages).groupBy(publishedPages.indexStatus);
+  const result = { total: 0, indexed: 0, notIndexed: 0, pending: 0, gscSubmitted: 0 };
+  for (const r of rows) {
+    result.total += Number(r.cnt);
+    if (r.indexStatus === "indexed") result.indexed = Number(r.cnt);
+    else if (r.indexStatus === "not_indexed") result.notIndexed = Number(r.cnt);
+    else if (r.indexStatus === "pending") result.pending = Number(r.cnt);
+  }
+  const gscRows = await db.select({ cnt: count() }).from(publishedPages)
+    .where(eq(publishedPages.gscSubmitted, 1 as any));
+  result.gscSubmitted = Number(gscRows[0]?.cnt ?? 0);
   return result;
 }

@@ -33,6 +33,7 @@ import {
   FileText,
   MonitorCheck,
   Layers,
+  BookMarked,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -63,6 +64,7 @@ const menuGroups = [
     label: "发布与链接",
     items: [
       { icon: Zap, label: "发布任务", path: "/publish-tasks" },
+      { icon: BookMarked, label: "已发布链接", path: "/published-pages" },
       { icon: Link2, label: "超链接管理", path: "/hyperlinks" },
     ],
   },

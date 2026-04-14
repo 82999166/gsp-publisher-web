@@ -70,9 +70,11 @@ export default function Settings() {
     autoApproveThreshold: 0,
     // gsc
     gscEnabled: false,
+    gscAutoSubmit: true,
     gscClientEmail: "",
     gscPrivateKey: "",
     gscSiteUrl: "",
+    gscServiceAccountJson: "",
   });
 
   useEffect(() => {
@@ -395,6 +397,35 @@ export default function Settings() {
               </div>
               {form.gscEnabled && (
                 <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">发布后自动提交 URL</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">每篇文章发布成功后自动调用 Indexing API，加速收录（24小时内）</p>
+                    </div>
+                    <Switch
+                      checked={(form as any).gscAutoSubmit ?? true}
+                      onCheckedChange={v => setField("gscAutoSubmit", v)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Service Account JSON（推荐）</Label>
+                    <Textarea
+                      value={(form as any).gscServiceAccountJson ?? ""}
+                      onChange={e => {
+                        setField("gscServiceAccountJson", e.target.value);
+                        try {
+                          const parsed = JSON.parse(e.target.value);
+                          if (parsed.client_email) setField("gscClientEmail", parsed.client_email);
+                          if (parsed.private_key) setField("gscPrivateKey", parsed.private_key);
+                        } catch {}
+                      }}
+                      placeholder='将 Google Cloud 下载的 Service Account JSON 文件内容全部粘贴到这里，自动解析 Email 和 Key'
+                      className="font-mono text-xs h-28 resize-none"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      在 <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Google Cloud Console</a> 创建 Service Account 并开通 Indexing API 权限，下载 JSON 密鑰文件
+                    </p>
+                  </div>
                   <div className="space-y-1.5">
                     <Label>站点 URL</Label>
                     <Input
@@ -404,24 +435,12 @@ export default function Settings() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Service Account Email</Label>
+                    <Label>Service Account Email（自动解析）</Label>
                     <Input
                       value={form.gscClientEmail}
                       onChange={e => setField("gscClientEmail", e.target.value)}
                       placeholder="your-service@project.iam.gserviceaccount.com"
                     />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Private Key</Label>
-                    <Textarea
-                      value={form.gscPrivateKey}
-                      onChange={e => setField("gscPrivateKey", e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----..."
-                      className="font-mono text-xs h-32 resize-none"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      在 Google Cloud Console 创建 Service Account 并下载 JSON 密钥文件
-                    </p>
                   </div>
                 </>
               )}
