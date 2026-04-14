@@ -20,8 +20,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Edit2,
   HelpCircle,
+  KeyRound,
   Plus,
   RefreshCw,
   Trash2,
@@ -43,6 +46,8 @@ type Account = {
   lastVerifiedAt?: Date | null;
   createdAt?: Date | null;
 };
+
+type EditForm = Account & { newCookieRaw: string; showCookieField: boolean; };
 
 const statusLabel: Record<string, string> = {
   online: "正常",
@@ -126,7 +131,7 @@ export default function Accounts() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editAccount, setEditAccount] = useState<Account | null>(null);
+  const [editAccount, setEditAccount] = useState<EditForm | null>(null);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -141,7 +146,7 @@ export default function Accounts() {
   }
 
   function openEdit(account: Account) {
-    setEditAccount(account);
+    setEditAccount({ ...account, newCookieRaw: "", showCookieField: false });
     setEditDialogOpen(true);
   }
 
@@ -162,10 +167,23 @@ export default function Accounts() {
 
   function handleUpdate() {
     if (!editAccount) return;
+    // 如果填写了新 Cookie，先验证格式
+    if (editAccount.newCookieRaw.trim()) {
+      try {
+        const parsed = JSON.parse(editAccount.newCookieRaw.trim());
+        if (!Array.isArray(parsed)) {
+          toast.error("Cookie 格式错误：必须是 JSON 数组格式");
+          return;
+        }
+      } catch {
+        // 允许原始字符串格式
+      }
+    }
     updateMutation.mutate({
       id: editAccount.id,
       name: editAccount.name,
       email: editAccount.email ?? undefined,
+      cookieRaw: editAccount.newCookieRaw.trim() || undefined,
       dailyLimit: editAccount.dailyLimit,
       siteAge: editAccount.siteAge as any,
       notes: editAccount.notes ?? undefined,
@@ -368,11 +386,12 @@ export default function Accounts() {
       {/* Edit Dialog */}
       {editAccount && (
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
+          <DialogContent className="max-w-lg flex flex-col" style={{ maxHeight: "90vh" }}>
+            <DialogHeader className="shrink-0">
               <DialogTitle>编辑账号</DialogTitle>
+              <DialogDescription>修改账号信息，如需更新 Cookie 请展开 Cookie 修改区域</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="overflow-y-auto flex-1 pr-1 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>账号名称</Label>
@@ -395,7 +414,7 @@ export default function Accounts() {
                   <Input
                     type="number"
                     min={1}
-                    max={50}
+                    max={500}
                     value={editAccount.dailyLimit}
                     onChange={e => setEditAccount(a => a ? { ...a, dailyLimit: parseInt(e.target.value) || 5 } : a)}
                   />
@@ -424,8 +443,46 @@ export default function Accounts() {
                   onChange={e => setEditAccount(a => a ? { ...a, notes: e.target.value } : a)}
                 />
               </div>
+
+              {/* Cookie 修改区域 */}
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-4 py-3 bg-muted/40 hover:bg-muted/60 transition-colors text-sm font-medium"
+                  onClick={() => setEditAccount(a => a ? { ...a, showCookieField: !a.showCookieField } : a)}
+                >
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="h-4 w-4 text-amber-600" />
+                    <span>更新 Cookie</span>
+                    {editAccount.newCookieRaw.trim() && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">已填写</span>
+                    )}
+                  </div>
+                  {editAccount.showCookieField
+                    ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </button>
+                {editAccount.showCookieField && (
+                  <div className="p-4 space-y-3 border-t border-border">
+                    <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-3 space-y-1">
+                      <p className="font-medium text-amber-800">如何获取最新 Cookie：</p>
+                      <p>1. 在 Chrome 中登录 Google 账号</p>
+                      <p>2. 安装 <strong>Cookie-Editor</strong> 插件</p>
+                      <p>3. 在 google.com 上打开插件 → Export → Export as JSON</p>
+                      <p>4. 将复制的 JSON 粘贴到下方文本框</p>
+                    </div>
+                    <Textarea
+                      placeholder='粘贴新的 Cookie JSON，例如：[{"name":"SID","value":"...","domain":".google.com"}]'
+                      className="font-mono text-xs h-36 resize-y"
+                      value={editAccount.newCookieRaw}
+                      onChange={e => setEditAccount(a => a ? { ...a, newCookieRaw: e.target.value } : a)}
+                    />
+                    <p className="text-xs text-muted-foreground">留空则不修改现有 Cookie</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <DialogFooter>
+            <DialogFooter className="shrink-0 pt-4 border-t mt-2">
               <Button variant="outline" onClick={() => setEditDialogOpen(false)}>取消</Button>
               <Button onClick={handleUpdate} disabled={updateMutation.isPending}>
                 {updateMutation.isPending ? "保存中..." : "保存修改"}
