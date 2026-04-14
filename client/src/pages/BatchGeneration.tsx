@@ -1,500 +1,622 @@
-import { useState, useRef, useCallback } from "react";
-import { trpc } from "@/lib/trpc";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
 import {
-  Upload, Play, Pause, Square, Trash2, RefreshCw, FileText,
-  CheckCircle2, XCircle, Clock, Loader2, Plus, Download,
-  ChevronDown, ChevronUp, AlertCircle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { trpc } from "@/lib/trpc";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Link2,
+  Loader2,
+  Pause,
+  Play,
+  Plus,
+  RotateCcw,
+  Tag,
+  Trash2,
+  Upload,
+  X,
+  Zap,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
-// ─── 类型定义 ─────────────────────────────────────────────────────────────────
-interface ImportRow {
-  rowIndex: number;
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface ImportItem {
   keyword: string;
   title?: string;
-  extraKeywords?: string[];
-  hasError?: boolean;
-  errorMsg?: string;
 }
 
-interface BatchItem {
-  id: number;
-  keyword: string;
-  title: string | null;
-  status: "pending" | "running" | "success" | "failed" | "skipped";
-  generatedTitle?: string | null;
-  generatedWordCount?: number | null;
-  errorMessage?: string | null;
+interface AnchorLink {
+  anchorText: string;
+  url: string;
+  position: "intro" | "body" | "end";
 }
 
-// ─── 解析导入文本 ─────────────────────────────────────────────────────────────
-function parseImportText(text: string): ImportRow[] {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  return lines.map((line, idx) => {
-    // 支持 Tab 分隔 或 逗号分隔
-    const parts = line.includes("\t") ? line.split("\t") : line.split(",");
-    const keyword = parts[0]?.trim() ?? "";
-    const title = parts[1]?.trim() || undefined;
-    const extraKeywords = parts.slice(2).map(k => k.trim()).filter(Boolean);
-    return {
-      rowIndex: idx,
-      keyword,
-      title,
-      extraKeywords,
-      hasError: !keyword,
-      errorMsg: !keyword ? "关键词不能为空" : undefined,
-    };
-  });
+interface BatchConfig {
+  name: string;
+  language: "zh-CN" | "en" | "zh-TW";
+  minWords: number;
+  style: "informational" | "commercial" | "navigational";
+  concurrency: number;
+  insertKeywords: string[];
+  anchorLinks: AnchorLink[];
+  insertParagraph: string;
+  autoApproveThreshold: number;
+  autoQueue: boolean;
 }
 
-// ─── 状态徽章 ─────────────────────────────────────────────────────────────────
+// ─── Status Badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }> = {
-    pending: { label: "待处理", variant: "secondary", icon: <Clock className="h-3 w-3" /> },
-    running: { label: "生成中", variant: "default", icon: <Loader2 className="h-3 w-3 animate-spin" /> },
-    paused: { label: "已暂停", variant: "outline", icon: <Pause className="h-3 w-3" /> },
-    completed: { label: "已完成", variant: "default", icon: <CheckCircle2 className="h-3 w-3" /> },
-    cancelled: { label: "已取消", variant: "destructive", icon: <Square className="h-3 w-3" /> },
-    success: { label: "成功", variant: "default", icon: <CheckCircle2 className="h-3 w-3" /> },
-    failed: { label: "失败", variant: "destructive", icon: <XCircle className="h-3 w-3" /> },
+  const map: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+    pending: { label: "待处理", variant: "secondary" },
+    running: { label: "运行中", variant: "default" },
+    paused: { label: "已暂停", variant: "outline" },
+    completed: { label: "已完成", variant: "default" },
+    failed: { label: "失败", variant: "destructive" },
   };
-  const cfg = map[status] ?? { label: status, variant: "secondary" as const, icon: null };
-  return (
-    <Badge variant={cfg.variant} className="gap-1 text-xs">
-      {cfg.icon}
-      {cfg.label}
-    </Badge>
-  );
+  const s = map[status] ?? { label: status, variant: "secondary" };
+  return <Badge variant={s.variant} className={status === "completed" ? "bg-green-500 hover:bg-green-600 text-white" : status === "running" ? "bg-blue-500 hover:bg-blue-600 text-white" : ""}>{s.label}</Badge>;
 }
 
-// ─── 批次进度卡片 ─────────────────────────────────────────────────────────────
-function BatchProgressCard({ batchId, onDelete }: { batchId: number; onDelete: () => void }) {
+// ─── Batch Row ────────────────────────────────────────────────────────────────
+function BatchRow({ batch, onRefresh }: { batch: any; onRefresh: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const utils = trpc.useUtils();
+  const startMut = trpc.batchGeneration.start.useMutation({ onSuccess: () => { toast.success("已启动"); onRefresh(); } });
+  const pauseMut = trpc.batchGeneration.pause.useMutation({ onSuccess: () => { toast.success("已暂停"); onRefresh(); } });
+  const resumeMut = trpc.batchGeneration.resume.useMutation({ onSuccess: () => { toast.success("已继续"); onRefresh(); } });
+  const cancelMut = trpc.batchGeneration.cancel.useMutation({ onSuccess: () => { toast.success("已取消"); onRefresh(); } });
+  const deleteMut = trpc.batchGeneration.delete.useMutation({ onSuccess: () => { toast.success("已删除"); onRefresh(); } });
 
-  const { data: progress, isLoading } = trpc.batchGeneration.progress.useQuery(
-    { id: batchId },
-    { refetchInterval: (data) => {
-        if (!data) return 3000;
-        const s = (data as any)?.status;
-        return (s === "running" || s === "paused") ? 2000 : false;
-      }
-    }
+  const { data: progress } = trpc.batchGeneration.progress.useQuery(
+    { id: batch.id },
+    { refetchInterval: batch.status === "running" ? 2000 : false }
   );
 
-  const { data: items } = trpc.batchGeneration.items.useQuery(
-    { batchId },
-    { enabled: expanded, refetchInterval: expanded ? 3000 : false }
-  );
-
-  const startMut = trpc.batchGeneration.start.useMutation({
-    onSuccess: () => { toast.success("批次已启动"); utils.batchGeneration.progress.invalidate({ id: batchId }); },
-    onError: (e) => toast.error(e.message),
-  });
-  const pauseMut = trpc.batchGeneration.pause.useMutation({
-    onSuccess: () => { toast.success("批次已暂停"); utils.batchGeneration.progress.invalidate({ id: batchId }); },
-  });
-  const resumeMut = trpc.batchGeneration.resume.useMutation({
-    onSuccess: () => { toast.success("批次已继续"); utils.batchGeneration.progress.invalidate({ id: batchId }); },
-  });
-  const cancelMut = trpc.batchGeneration.cancel.useMutation({
-    onSuccess: () => { toast.success("批次已取消"); utils.batchGeneration.progress.invalidate({ id: batchId }); },
-  });
-  const deleteMut = trpc.batchGeneration.delete.useMutation({
-    onSuccess: () => { toast.success("批次已删除"); onDelete(); },
-  });
-
-  if (isLoading || !progress) return <Card className="p-4"><Loader2 className="h-4 w-4 animate-spin" /></Card>;
-
-  const p = progress as any;
-  const total = p.totalCount ?? 0;
-  const successPct = total > 0 ? Math.round((p.success / total) * 100) : 0;
-  const status = p.status as string;
+  const pct = progress?.percent ?? (batch.totalCount > 0 ? Math.round((batch.completedCount / batch.totalCount) * 100) : 0);
+  const completed = progress?.completedCount ?? batch.completedCount;
+  const failed = progress?.failedCount ?? batch.failedCount;
+  const total = batch.totalCount;
 
   return (
-    <Card className="border border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <CardTitle className="text-base truncate">{p.name}</CardTitle>
-              <StatusBadge status={status} />
-            </div>
-            <CardDescription className="mt-1 text-xs">
-              共 {total.toLocaleString()} 条 · 成功 {(p.success ?? 0).toLocaleString()} · 失败 {(p.failed ?? 0).toLocaleString()} · 待处理 {(p.pending ?? 0).toLocaleString()}
-            </CardDescription>
+    <div className="border rounded-lg overflow-hidden">
+      <div
+        className="flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/30 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-sm truncate">{batch.name}</span>
+            <StatusBadge status={progress?.status ?? batch.status} />
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {status === "pending" && (
-              <Button size="sm" variant="default" onClick={() => startMut.mutate({ id: batchId })} disabled={startMut.isPending}>
-                <Play className="h-3 w-3 mr-1" />启动
-              </Button>
-            )}
-            {status === "running" && (
-              <Button size="sm" variant="outline" onClick={() => pauseMut.mutate({ id: batchId })} disabled={pauseMut.isPending}>
-                <Pause className="h-3 w-3 mr-1" />暂停
-              </Button>
-            )}
-            {status === "paused" && (
-              <Button size="sm" variant="default" onClick={() => resumeMut.mutate({ id: batchId })} disabled={resumeMut.isPending}>
-                <Play className="h-3 w-3 mr-1" />继续
-              </Button>
-            )}
-            {(status === "running" || status === "paused") && (
-              <Button size="sm" variant="destructive" onClick={() => cancelMut.mutate({ id: batchId })} disabled={cancelMut.isPending}>
-                <Square className="h-3 w-3 mr-1" />取消
-              </Button>
-            )}
-            {(status === "completed" || status === "cancelled" || status === "pending") && (
-              <Button size="sm" variant="ghost" onClick={() => deleteMut.mutate({ id: batchId })} disabled={deleteMut.isPending}>
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={() => setExpanded(v => !v)}>
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>{completed}/{total} 完成</span>
+            {failed > 0 && <span className="text-destructive">{failed} 失败</span>}
+            <span>{new Date(batch.createdAt).toLocaleString()}</span>
+          </div>
+          <div className="mt-2">
+            <Progress value={pct} className="h-1.5" />
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+          {(progress?.status ?? batch.status) === "pending" && (
+            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => startMut.mutate({ id: batch.id })} disabled={startMut.isPending}>
+              <Play className="h-3 w-3" /> 启动
             </Button>
-          </div>
+          )}
+          {(progress?.status ?? batch.status) === "running" && (
+            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => pauseMut.mutate({ id: batch.id })} disabled={pauseMut.isPending}>
+              <Pause className="h-3 w-3" /> 暂停
+            </Button>
+          )}
+          {(progress?.status ?? batch.status) === "paused" && (
+            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => resumeMut.mutate({ id: batch.id })} disabled={resumeMut.isPending}>
+              <RotateCcw className="h-3 w-3" /> 继续
+            </Button>
+          )}
+          {["running", "paused"].includes(progress?.status ?? batch.status) && (
+            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={() => cancelMut.mutate({ id: batch.id })} disabled={cancelMut.isPending}>
+              <X className="h-3 w-3" /> 取消
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => { if (confirm("确认删除此批次及所有条目？")) deleteMut.mutate({ id: batch.id }); }} disabled={deleteMut.isPending}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+          {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </div>
-        <div className="mt-2">
-          <Progress value={successPct} className="h-2" />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>{successPct}% 完成</span>
-            <span>并发: {p.concurrency} · {p.language} · {p.minWords}字+</span>
-          </div>
-        </div>
-      </CardHeader>
+      </div>
 
       {expanded && (
-        <CardContent className="pt-0">
-          <div className="border rounded-md overflow-hidden">
-            <div className="grid grid-cols-12 text-xs font-medium bg-muted px-3 py-2 text-muted-foreground">
-              <div className="col-span-1">#</div>
-              <div className="col-span-4">关键词</div>
-              <div className="col-span-4">生成标题</div>
-              <div className="col-span-2">字数</div>
-              <div className="col-span-1">状态</div>
+        <div className="border-t bg-muted/20 p-4">
+          <div className="grid grid-cols-4 gap-3 text-sm">
+            <div className="bg-background rounded p-3 text-center">
+              <div className="text-2xl font-bold text-foreground">{total}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">总计</div>
             </div>
-            <div className="max-h-64 overflow-y-auto divide-y divide-border">
-              {(items as BatchItem[] | undefined)?.slice(0, 200).map((item) => (
-                <div key={item.id} className="grid grid-cols-12 text-xs px-3 py-2 hover:bg-muted/50">
-                  <div className="col-span-1 text-muted-foreground">{item.id}</div>
-                  <div className="col-span-4 truncate font-medium">{item.keyword}</div>
-                  <div className="col-span-4 truncate text-muted-foreground">
-                    {item.generatedTitle || item.title || <span className="text-muted-foreground/50">—</span>}
-                  </div>
-                  <div className="col-span-2 text-muted-foreground">
-                    {item.generatedWordCount ? `${item.generatedWordCount}字` : "—"}
-                  </div>
-                  <div className="col-span-1">
-                    <StatusBadge status={item.status} />
-                  </div>
-                </div>
-              ))}
-              {!items?.length && (
-                <div className="text-center text-muted-foreground text-xs py-6">暂无条目数据</div>
-              )}
+            <div className="bg-background rounded p-3 text-center">
+              <div className="text-2xl font-bold text-green-500">{completed}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">已完成</div>
+            </div>
+            <div className="bg-background rounded p-3 text-center">
+              <div className="text-2xl font-bold text-destructive">{failed}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">失败</div>
+            </div>
+            <div className="bg-background rounded p-3 text-center">
+              <div className="text-2xl font-bold text-blue-500">{pct}%</div>
+              <div className="text-xs text-muted-foreground mt-0.5">进度</div>
             </div>
           </div>
-        </CardContent>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span className="bg-background rounded px-2 py-1">语言: {batch.language}</span>
+            <span className="bg-background rounded px-2 py-1">最少字数: {batch.minWords}</span>
+            <span className="bg-background rounded px-2 py-1">并发数: {batch.concurrency}</span>
+            {batch.autoApproveThreshold > 0 && <span className="bg-background rounded px-2 py-1">自动通过阈值: {batch.autoApproveThreshold}分</span>}
+            {batch.autoQueue && <span className="bg-background rounded px-2 py-1 text-blue-500">自动加入发布队列</span>}
+          </div>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
-// ─── 主页面 ───────────────────────────────────────────────────────────────────
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BatchGeneration() {
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [step, setStep] = useState<"import" | "config" | "confirm">("import");
   const [importText, setImportText] = useState("");
-  const [parsedRows, setParsedRows] = useState<ImportRow[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
-  const [batchName, setBatchName] = useState(`批次-${new Date().toLocaleDateString("zh-CN").replace(/\//g, "")}`);
-  const [language, setLanguage] = useState<"zh-CN" | "en" | "zh-TW">("zh-CN");
-  const [style, setStyle] = useState<"informational" | "commercial" | "navigational">("informational");
-  const [minWords, setMinWords] = useState(800);
-  const [concurrency, setConcurrency] = useState(3);
-  const [autoPublish, setAutoPublish] = useState(false);
-  const [batchIds, setBatchIds] = useState<number[]>([]);
+  const [parsedItems, setParsedItems] = useState<ImportItem[]>([]);
+  const [parseError, setParseError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const utils = trpc.useUtils();
-
-  const { data: batches, refetch: refetchBatches } = trpc.batchGeneration.list.useQuery();
-
-  const createMut = trpc.batchGeneration.create.useMutation({
-    onSuccess: (data) => {
-      toast.success(`批次创建成功，共 ${data.totalCount.toLocaleString()} 条`);
-      setBatchIds(prev => [data.batchId, ...prev]);
-      setShowCreateDialog(false);
-      setImportText("");
-      setParsedRows([]);
-      setShowPreview(false);
-      refetchBatches();
-    },
-    onError: (e) => toast.error(`创建失败: ${e.message}`),
+  const [config, setConfig] = useState<BatchConfig>({
+    name: `批次_${new Date().toLocaleDateString("zh-CN").replace(/\//g, "")}`,
+    language: "zh-CN",
+    minWords: 800,
+    style: "informational",
+    concurrency: 3,
+    insertKeywords: [],
+    anchorLinks: [],
+    insertParagraph: "",
+    autoApproveThreshold: 70,
+    autoQueue: false,
   });
 
-  const handleParseText = useCallback(() => {
-    if (!importText.trim()) { toast.error("请先输入或粘贴数据"); return; }
-    const rows = parseImportText(importText);
-    setParsedRows(rows);
-    setShowPreview(true);
-    const errorCount = rows.filter(r => r.hasError).length;
-    if (errorCount > 0) {
-      toast.warning(`解析完成：${rows.length} 条，其中 ${errorCount} 条有错误（将被跳过）`);
-    } else {
-      toast.success(`解析完成：共 ${rows.length} 条，全部有效`);
+  const [newKeyword, setNewKeyword] = useState("");
+  const [newAnchor, setNewAnchor] = useState<AnchorLink>({ anchorText: "", url: "", position: "body" });
+
+  const { data: batches, refetch } = trpc.batchGeneration.list.useQuery();
+  const createMut = trpc.batchGeneration.create.useMutation({
+    onSuccess: (data) => {
+      toast.success(`批次创建成功，共 ${data.totalCount} 条任务`);
+      setShowCreate(false);
+      setStep("import");
+      setImportText("");
+      setParsedItems([]);
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const setConfigField = <K extends keyof BatchConfig>(key: K, value: BatchConfig[K]) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  // ─── Parse import text ─────────────────────────────────────────────────────
+  const parseImport = useCallback(() => {
+    setParseError("");
+    const lines = importText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      setParseError("请输入至少一行数据");
+      return;
     }
+    const items: ImportItem[] = [];
+    for (const line of lines) {
+      // Support: "keyword,title" or "keyword\ttitle" or just "keyword"
+      const parts = line.includes("\t") ? line.split("\t") : line.split(",");
+      const keyword = parts[0]?.trim();
+      const title = parts[1]?.trim();
+      if (!keyword) continue;
+      items.push({ keyword, title: title || undefined });
+    }
+    if (items.length === 0) {
+      setParseError("未能解析出有效数据，请检查格式");
+      return;
+    }
+    setParsedItems(items);
+    setStep("config");
+    toast.success(`成功解析 ${items.length} 条数据`);
   }, [importText]);
 
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // ─── Handle CSV file upload ────────────────────────────────────────────────
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      setImportText(text);
-      toast.info("文件已读取，点击「解析预览」查看数据");
+      // Remove BOM if present
+      setImportText(text.replace(/^\uFEFF/, ""));
+      toast.info("文件已加载，点击「解析」继续");
     };
     reader.readAsText(file, "utf-8");
-  }, []);
+  };
 
-  const handleCreate = useCallback(() => {
-    const validRows = parsedRows.filter(r => !r.hasError);
-    if (validRows.length === 0) { toast.error("没有有效的条目"); return; }
+  // ─── Submit ────────────────────────────────────────────────────────────────
+  const handleCreate = () => {
     createMut.mutate({
-      name: batchName,
-      language,
-      style,
-      minWords,
-      concurrency,
-      autoPublish,
-      items: validRows.map(r => ({
-        keyword: r.keyword,
-        title: r.title,
-        extraKeywords: r.extraKeywords,
-      })),
+      ...config,
+      items: parsedItems,
     });
-  }, [parsedRows, batchName, language, style, minWords, concurrency, autoPublish, createMut]);
+  };
 
-  const allBatchIds = [
-    ...batchIds,
-    ...((batches as any[]) ?? []).map((b: any) => b.id).filter((id: number) => !batchIds.includes(id)),
-  ];
+  const totalBatches = batches?.length ?? 0;
+  const runningBatches = batches?.filter(b => b.status === "running").length ?? 0;
+  const totalItems = batches?.reduce((s, b) => s + b.totalCount, 0) ?? 0;
+  const completedItems = batches?.reduce((s, b) => s + b.completedCount, 0) ?? 0;
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      {/* 页面标题 */}
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">批量内容生成</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            导入标题+关键词列表，后台批量生成 SEO 文章，支持万级任务
-          </p>
+          <h1 className="text-xl font-bold text-foreground">批量生成</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">导入关键词和标题，批量 AI 生成文章，支持万级任务</p>
         </div>
-        <Button onClick={() => setShowCreateDialog(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          新建批次
+        <Button onClick={() => { setShowCreate(true); setStep("import"); }} className="gap-2">
+          <Plus className="h-4 w-4" /> 新建批次
         </Button>
       </div>
 
-      {/* 格式说明 */}
-      <Card className="bg-muted/40 border-dashed">
-        <CardContent className="pt-4 pb-4">
-          <div className="flex gap-3">
-            <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-            <div className="text-sm text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground">导入格式说明</p>
-              <p>每行一条，支持 CSV（逗号分隔）或 TSV（Tab 分隔）：</p>
-              <code className="block bg-background rounded px-2 py-1 text-xs font-mono">
-                关键词,文章标题（可选）,附加关键词1（可选）,附加关键词2（可选）
-              </code>
-              <p>示例：<code className="text-xs font-mono">减肥方法,科学减肥的10个方法,健康减肥,快速减肥</code></p>
-              <p>仅有关键词时：<code className="text-xs font-mono">减肥方法</code>（标题由 AI 自动生成）</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 批次列表 */}
-      <div className="space-y-3">
-        {allBatchIds.length === 0 ? (
-          <Card className="py-16">
-            <CardContent className="flex flex-col items-center justify-center text-center">
-              <FileText className="h-12 w-12 text-muted-foreground/40 mb-4" />
-              <p className="text-muted-foreground">暂无批次，点击「新建批次」开始</p>
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: "总批次", value: totalBatches, icon: <Zap className="h-4 w-4" />, color: "text-purple-500" },
+          { label: "运行中", value: runningBatches, icon: <Loader2 className="h-4 w-4 animate-spin" />, color: "text-blue-500" },
+          { label: "总任务数", value: totalItems.toLocaleString(), icon: <Tag className="h-4 w-4" />, color: "text-orange-500" },
+          { label: "已完成", value: completedItems.toLocaleString(), icon: <CheckCircle2 className="h-4 w-4" />, color: "text-green-500" },
+        ].map(stat => (
+          <Card key={stat.label} className="border-0 shadow-sm bg-card">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className={`${stat.color} bg-muted rounded-lg p-2`}>{stat.icon}</div>
+              <div>
+                <div className="text-xl font-bold text-foreground">{stat.value}</div>
+                <div className="text-xs text-muted-foreground">{stat.label}</div>
+              </div>
             </CardContent>
           </Card>
-        ) : (
-          allBatchIds.map(id => (
-            <BatchProgressCard
-              key={id}
-              batchId={id}
-              onDelete={() => {
-                setBatchIds(prev => prev.filter(i => i !== id));
-                refetchBatches();
-              }}
-            />
-          ))
-        )}
+        ))}
       </div>
 
-      {/* 新建批次弹窗 */}
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>新建批量生成批次</DialogTitle>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-            {/* 批次配置 */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label>批次名称</Label>
-                <Input value={batchName} onChange={e => setBatchName(e.target.value)} className="mt-1" />
-              </div>
-              <div>
-                <Label>语言</Label>
-                <Select value={language} onValueChange={v => setLanguage(v as any)}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="zh-CN">简体中文</SelectItem>
-                    <SelectItem value="en">英文</SelectItem>
-                    <SelectItem value="zh-TW">繁体中文</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>文章类型</Label>
-                <Select value={style} onValueChange={v => setStyle(v as any)}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="informational">信息型（科普解答）</SelectItem>
-                    <SelectItem value="commercial">商业型（推广评测）</SelectItem>
-                    <SelectItem value="navigational">导航型（品牌介绍）</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>最少字数</Label>
-                <Select value={String(minWords)} onValueChange={v => setMinWords(Number(v))}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="500">500字</SelectItem>
-                    <SelectItem value="800">800字（推荐）</SelectItem>
-                    <SelectItem value="1200">1200字</SelectItem>
-                    <SelectItem value="1500">1500字</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>并发数（同时生成路数）</Label>
-                <Select value={String(concurrency)} onValueChange={v => setConcurrency(Number(v))}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1路（最慢，最省费用）</SelectItem>
-                    <SelectItem value="3">3路（推荐）</SelectItem>
-                    <SelectItem value="5">5路</SelectItem>
-                    <SelectItem value="10">10路（最快）</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+      {/* Create Panel */}
+      {showCreate && (
+        <Card className="border-2 border-primary/20 shadow-md">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">
+                {step === "import" && "第一步：导入数据"}
+                {step === "config" && `第二步：配置生成参数（已解析 ${parsedItems.length} 条）`}
+                {step === "confirm" && `第三步：确认并创建批次`}
+              </CardTitle>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setShowCreate(false)}>
+                <X className="h-4 w-4" />
+              </Button>
             </div>
+            {/* Step indicator */}
+            <div className="flex items-center gap-2 mt-2">
+              {["import", "config", "confirm"].map((s, i) => (
+                <div key={s} className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${step === s ? "bg-primary text-primary-foreground" : ["import", "config", "confirm"].indexOf(step) > i ? "bg-green-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                    {["import", "config", "confirm"].indexOf(step) > i ? "✓" : i + 1}
+                  </div>
+                  {i < 2 && <div className="h-px w-8 bg-muted" />}
+                </div>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
 
-            {/* 导入区域 */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <Label>导入数据</Label>
+            {/* Step 1: Import */}
+            {step === "import" && (
+              <div className="space-y-4">
+                <div className="bg-muted/40 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+                  <p className="font-medium text-foreground">支持的格式（每行一条）：</p>
+                  <p>• 仅关键词：<code className="bg-background px-1 rounded">减肥方法</code></p>
+                  <p>• 关键词,标题：<code className="bg-background px-1 rounded">减肥方法,2024年最有效的10种减肥方法</code></p>
+                  <p>• 关键词[Tab]标题（CSV 格式）</p>
+                  <p className="text-orange-500">支持直接粘贴 Excel 复制的内容（Tab 分隔）</p>
+                </div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
-                    <Upload className="h-3 w-3 mr-1" />
-                    上传 CSV/TXT
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => fileInputRef.current?.click()}>
+                    <Upload className="h-3.5 w-3.5" /> 上传 CSV 文件
                   </Button>
-                  <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv" className="hidden" onChange={handleFileUpload} />
+                  <input ref={fileInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
                 </div>
-              </div>
-              <Textarea
-                value={importText}
-                onChange={e => { setImportText(e.target.value); setShowPreview(false); }}
-                placeholder={"粘贴数据，每行一条：\n减肥方法,科学减肥的10个方法,健康减肥\n英语学习,零基础学英语\n副业赚钱"}
-                className="font-mono text-xs h-40 resize-none"
-              />
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-muted-foreground">
-                  {importText.split("\n").filter(l => l.trim()).length.toLocaleString()} 行
-                </span>
-                <Button size="sm" variant="secondary" onClick={handleParseText}>
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                  解析预览
-                </Button>
-              </div>
-            </div>
-
-            {/* 预览表格 */}
-            {showPreview && parsedRows.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <Label>
-                    预览（共 {parsedRows.length.toLocaleString()} 条，
-                    有效 <span className="text-green-600">{parsedRows.filter(r => !r.hasError).length.toLocaleString()}</span>，
-                    错误 <span className="text-red-500">{parsedRows.filter(r => r.hasError).length}</span>）
-                  </Label>
+                <div className="space-y-1.5">
+                  <Label>粘贴数据（支持上万行）</Label>
+                  <Textarea
+                    value={importText}
+                    onChange={e => setImportText(e.target.value)}
+                    placeholder={"减肥方法\n减肥方法,2024年最有效的10种减肥方法\n瘦腿运动,在家就能做的5个瘦腿动作\n..."}
+                    className="font-mono text-xs h-48 resize-y"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    已输入 {importText.split("\n").filter(l => l.trim()).length} 行
+                  </p>
                 </div>
-                <div className="border rounded-md overflow-hidden">
-                  <div className="grid grid-cols-12 text-xs font-medium bg-muted px-3 py-2 text-muted-foreground">
-                    <div className="col-span-1">#</div>
-                    <div className="col-span-4">关键词</div>
-                    <div className="col-span-5">标题（空=AI生成）</div>
-                    <div className="col-span-2">状态</div>
+                {parseError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded p-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {parseError}
                   </div>
-                  <div className="max-h-48 overflow-y-auto divide-y divide-border">
-                    {parsedRows.slice(0, 500).map((row) => (
-                      <div key={row.rowIndex} className={`grid grid-cols-12 text-xs px-3 py-1.5 ${row.hasError ? "bg-red-50 dark:bg-red-950/20" : ""}`}>
-                        <div className="col-span-1 text-muted-foreground">{row.rowIndex + 1}</div>
-                        <div className="col-span-4 truncate">{row.keyword || <span className="text-red-500">空</span>}</div>
-                        <div className="col-span-5 truncate text-muted-foreground">{row.title || "—"}</div>
-                        <div className="col-span-2">
-                          {row.hasError
-                            ? <span className="text-red-500 text-xs">{row.errorMsg}</span>
-                            : <span className="text-green-600 text-xs">✓</span>
-                          }
-                        </div>
-                      </div>
-                    ))}
-                    {parsedRows.length > 500 && (
-                      <div className="text-center text-xs text-muted-foreground py-2">
-                        仅显示前 500 条预览，实际将导入全部 {parsedRows.length.toLocaleString()} 条
-                      </div>
-                    )}
-                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setShowCreate(false)}>取消</Button>
+                  <Button onClick={parseImport} disabled={!importText.trim()} className="gap-2">
+                    <CheckCircle2 className="h-4 w-4" /> 解析数据
+                  </Button>
                 </div>
               </div>
             )}
-          </div>
 
-          <DialogFooter className="border-t pt-4 mt-2">
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>取消</Button>
-            <Button
-              onClick={handleCreate}
-              disabled={createMut.isPending || parsedRows.filter(r => !r.hasError).length === 0}
-            >
-              {createMut.isPending ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />创建中...</>
-              ) : (
-                <>创建批次（{parsedRows.filter(r => !r.hasError).length.toLocaleString()} 条）</>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            {/* Step 2: Config */}
+            {step === "config" && (
+              <div className="space-y-5">
+                {/* Basic config */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-foreground">基础配置</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>批次名称</Label>
+                      <Input value={config.name} onChange={e => setConfigField("name", e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>文章语言</Label>
+                      <Select value={config.language} onValueChange={v => setConfigField("language", v as any)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="zh-CN">简体中文</SelectItem>
+                          <SelectItem value="en">English</SelectItem>
+                          <SelectItem value="zh-TW">繁體中文</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>文章类型</Label>
+                      <Select value={config.style} onValueChange={v => setConfigField("style", v as any)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="informational">信息型（科普/介绍）</SelectItem>
+                          <SelectItem value="commercial">商业型（推广/评测）</SelectItem>
+                          <SelectItem value="navigational">导航型（指南/教程）</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>最少字数</Label>
+                      <Input type="number" min={300} max={5000} value={config.minWords} onChange={e => setConfigField("minWords", parseInt(e.target.value) || 800)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>并发数（1-10）</Label>
+                      <Input type="number" min={1} max={10} value={config.concurrency} onChange={e => setConfigField("concurrency", parseInt(e.target.value) || 3)} />
+                      <p className="text-xs text-muted-foreground">建议 3-5，过高可能触发 API 限速</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>自动通过质量分阈值（0=不自动通过）</Label>
+                      <Input type="number" min={0} max={100} value={config.autoApproveThreshold} onChange={e => setConfigField("autoApproveThreshold", parseInt(e.target.value) || 0)} />
+                      <p className="text-xs text-muted-foreground">达到此分数的文章自动跳过审核</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between bg-muted/30 rounded p-3">
+                    <div>
+                      <p className="text-sm font-medium">生成后自动加入发布队列</p>
+                      <p className="text-xs text-muted-foreground">文章生成并通过质量分后，自动创建发布任务</p>
+                    </div>
+                    <Switch checked={config.autoQueue} onCheckedChange={v => setConfigField("autoQueue", v)} />
+                  </div>
+                </div>
+
+                {/* Insert keywords */}
+                <div className="space-y-3 border-t pt-4">
+                  <div className="flex items-center gap-2">
+                    <Tag className="h-4 w-4 text-orange-500" />
+                    <h3 className="text-sm font-semibold text-foreground">指定插入关键词</h3>
+                    <span className="text-xs text-muted-foreground">（AI 生成时强制将这些词融入文章）</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={newKeyword}
+                      onChange={e => setNewKeyword(e.target.value)}
+                      placeholder="输入关键词，如：品牌名、产品名"
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && newKeyword.trim()) {
+                          setConfigField("insertKeywords", [...config.insertKeywords, newKeyword.trim()]);
+                          setNewKeyword("");
+                        }
+                      }}
+                    />
+                    <Button variant="outline" size="sm" className="shrink-0" onClick={() => {
+                      if (newKeyword.trim()) {
+                        setConfigField("insertKeywords", [...config.insertKeywords, newKeyword.trim()]);
+                        setNewKeyword("");
+                      }
+                    }}>
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {config.insertKeywords.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {config.insertKeywords.map((kw, i) => (
+                        <Badge key={i} variant="secondary" className="gap-1 pr-1">
+                          {kw}
+                          <button onClick={() => setConfigField("insertKeywords", config.insertKeywords.filter((_, j) => j !== i))} className="ml-1 hover:text-destructive">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Anchor links */}
+                <div className="space-y-3 border-t pt-4">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="h-4 w-4 text-blue-500" />
+                    <h3 className="text-sm font-semibold text-foreground">指定锚文本超链接</h3>
+                    <span className="text-xs text-muted-foreground">（AI 生成时自动插入到文章中）</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Input
+                      value={newAnchor.anchorText}
+                      onChange={e => setNewAnchor(a => ({ ...a, anchorText: e.target.value }))}
+                      placeholder="锚文本（如：了解更多）"
+                    />
+                    <Input
+                      value={newAnchor.url}
+                      onChange={e => setNewAnchor(a => ({ ...a, url: e.target.value }))}
+                      placeholder="目标 URL（https://...）"
+                    />
+                    <div className="flex gap-2">
+                      <Select value={newAnchor.position} onValueChange={v => setNewAnchor(a => ({ ...a, position: v as any }))}>
+                        <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="intro">引言处</SelectItem>
+                          <SelectItem value="body">正文中</SelectItem>
+                          <SelectItem value="end">末尾处</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => {
+                        if (newAnchor.anchorText.trim() && newAnchor.url.trim()) {
+                          setConfigField("anchorLinks", [...config.anchorLinks, { ...newAnchor }]);
+                          setNewAnchor({ anchorText: "", url: "", position: "body" });
+                        }
+                      }}>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  {config.anchorLinks.length > 0 && (
+                    <div className="space-y-1.5">
+                      {config.anchorLinks.map((link, i) => (
+                        <div key={i} className="flex items-center gap-2 bg-muted/30 rounded px-3 py-1.5 text-sm">
+                          <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5">
+                            {link.position === "intro" ? "引言" : link.position === "body" ? "正文" : "末尾"}
+                          </span>
+                          <span className="font-medium">{link.anchorText}</span>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="text-blue-500 truncate flex-1">{link.url}</span>
+                          <button onClick={() => setConfigField("anchorLinks", config.anchorLinks.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Insert paragraph */}
+                <div className="space-y-3 border-t pt-4">
+                  <h3 className="text-sm font-semibold text-foreground">指定插入段落（可选）</h3>
+                  <Textarea
+                    value={config.insertParagraph}
+                    onChange={e => setConfigField("insertParagraph", e.target.value)}
+                    placeholder="输入需要强制插入到每篇文章正文中的固定内容，如：品牌介绍、免责声明、联系方式等"
+                    className="h-24 resize-none text-sm"
+                  />
+                </div>
+
+                <div className="flex justify-between gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setStep("import")}>← 返回</Button>
+                  <Button onClick={() => setStep("confirm")} className="gap-2">
+                    下一步：确认 →
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Confirm */}
+            {step === "confirm" && (
+              <div className="space-y-4">
+                <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-semibold">批次摘要</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">批次名称</span><span className="font-medium">{config.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">任务总数</span><span className="font-bold text-primary">{parsedItems.length.toLocaleString()} 条</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">文章语言</span><span>{config.language}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">最少字数</span><span>{config.minWords} 字</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">并发数</span><span>{config.concurrency}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">预计耗时</span><span className="text-orange-500">约 {Math.ceil(parsedItems.length / config.concurrency * 4 / 60)} 分钟</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">自动通过阈值</span><span>{config.autoApproveThreshold > 0 ? `${config.autoApproveThreshold} 分` : "不自动通过"}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">自动加入发布队列</span><span>{config.autoQueue ? "是" : "否"}</span></div>
+                  </div>
+                  {config.insertKeywords.length > 0 && (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">指定关键词：</span>
+                      <span>{config.insertKeywords.join("、")}</span>
+                    </div>
+                  )}
+                  {config.anchorLinks.length > 0 && (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">锚文本链接：</span>
+                      <span>{config.anchorLinks.length} 条</span>
+                    </div>
+                  )}
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3 max-h-40 overflow-y-auto">
+                  <p className="text-xs text-muted-foreground mb-2">前 20 条预览：</p>
+                  {parsedItems.slice(0, 20).map((item, i) => (
+                    <div key={i} className="text-xs py-0.5 flex gap-2">
+                      <span className="text-muted-foreground w-6 shrink-0">{i + 1}.</span>
+                      <span className="font-medium">{item.keyword}</span>
+                      {item.title && <span className="text-muted-foreground truncate">→ {item.title}</span>}
+                    </div>
+                  ))}
+                  {parsedItems.length > 20 && <p className="text-xs text-muted-foreground mt-1">...还有 {parsedItems.length - 20} 条</p>}
+                </div>
+                <div className="flex justify-between gap-2">
+                  <Button variant="outline" onClick={() => setStep("config")}>← 返回</Button>
+                  <Button onClick={handleCreate} disabled={createMut.isPending} className="gap-2 min-w-32">
+                    {createMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> 创建中...</> : <><CheckCircle2 className="h-4 w-4" /> 创建批次</>}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Batch list */}
+      <div className="space-y-3">
+        {!batches ? (
+          <div className="flex items-center justify-center h-32 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" /> 加载中...
+          </div>
+        ) : batches.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground border-2 border-dashed rounded-lg">
+            <Zap className="h-8 w-8 mb-3 opacity-40" />
+            <p className="text-sm font-medium">还没有批次</p>
+            <p className="text-xs mt-1">点击「新建批次」导入关键词开始批量生成</p>
+          </div>
+        ) : (
+          batches.map(batch => (
+            <BatchRow key={batch.id} batch={batch} onRefresh={refetch} />
+          ))
+        )}
+      </div>
     </div>
   );
 }

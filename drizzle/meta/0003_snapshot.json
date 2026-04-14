@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "8675236e-f28d-4687-a6fb-01dd934d983b",
+  "id": "a1f1b7fd-690f-4f56-af4f-831dc0274d5d",
   "prevId": "5d0e3365-20b7-4275-bcea-5636b463922b",
   "tables": {
     "accounts": {
@@ -157,6 +157,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "status": {
+          "name": "status",
+          "type": "enum('pending','running','paused','completed','failed')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
         "totalCount": {
           "name": "totalCount",
           "type": "int",
@@ -165,24 +173,8 @@
           "autoincrement": false,
           "default": 0
         },
-        "pendingCount": {
-          "name": "pendingCount",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "runningCount": {
-          "name": "runningCount",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "successCount": {
-          "name": "successCount",
+        "completedCount": {
+          "name": "completedCount",
           "type": "int",
           "primaryKey": false,
           "notNull": true,
@@ -197,14 +189,6 @@
           "autoincrement": false,
           "default": 0
         },
-        "status": {
-          "name": "status",
-          "type": "enum('pending','running','paused','completed','cancelled')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'pending'"
-        },
         "language": {
           "name": "language",
           "type": "enum('zh-CN','en','zh-TW')",
@@ -212,21 +196,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'zh-CN'"
-        },
-        "style": {
-          "name": "style",
-          "type": "enum('informational','commercial','navigational')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'informational'"
-        },
-        "seoTemplateId": {
-          "name": "seoTemplateId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "minWords": {
           "name": "minWords",
@@ -236,6 +205,14 @@
           "autoincrement": false,
           "default": 800
         },
+        "style": {
+          "name": "style",
+          "type": "enum('informational','commercial','navigational')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'informational'"
+        },
         "concurrency": {
           "name": "concurrency",
           "type": "int",
@@ -244,8 +221,37 @@
           "autoincrement": false,
           "default": 3
         },
-        "autoPublish": {
-          "name": "autoPublish",
+        "insertKeywords": {
+          "name": "insertKeywords",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "anchorLinks": {
+          "name": "anchorLinks",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "insertParagraph": {
+          "name": "insertParagraph",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "autoApproveThreshold": {
+          "name": "autoApproveThreshold",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
+        },
+        "autoQueue": {
+          "name": "autoQueue",
           "type": "boolean",
           "primaryKey": false,
           "notNull": false,
@@ -314,9 +320,9 @@
           "notNull": true,
           "autoincrement": false
         },
-        "rowIndex": {
-          "name": "rowIndex",
-          "type": "int",
+        "keyword": {
+          "name": "keyword",
+          "type": "varchar(512)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -328,27 +334,21 @@
           "notNull": false,
           "autoincrement": false
         },
-        "keyword": {
-          "name": "keyword",
-          "type": "varchar(256)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "extraKeywords": {
-          "name": "extraKeywords",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "status": {
           "name": "status",
-          "type": "enum('pending','running','success','failed','skipped')",
+          "type": "enum('pending','running','completed','failed')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
           "default": "'pending'"
+        },
+        "retryCount": {
+          "name": "retryCount",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
         },
         "materialId": {
           "name": "materialId",
@@ -357,21 +357,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "errorMessage": {
-          "name": "errorMessage",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "retryCount": {
-          "name": "retryCount",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
         "generatedTitle": {
           "name": "generatedTitle",
           "type": "varchar(512)",
@@ -379,16 +364,23 @@
           "notNull": false,
           "autoincrement": false
         },
-        "generatedWordCount": {
-          "name": "generatedWordCount",
+        "wordCount": {
+          "name": "wordCount",
           "type": "int",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "generatedQualityScore": {
-          "name": "generatedQualityScore",
+        "qualityScore": {
+          "name": "qualityScore",
           "type": "float",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "errorMessage": {
+          "name": "errorMessage",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

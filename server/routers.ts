@@ -10,20 +10,15 @@ import {
   getPublishTasks, createPublishTask, updatePublishTask, deletePublishTask,
   getHyperlinks, createHyperlink, updateHyperlink, deleteHyperlink, seedPresetHyperlinks,
   getIndexingRecords, createIndexingRecord, updateIndexingRecord, deleteIndexingRecord,
-  getSettings, upsertSetting, seedDefaultSettings,
+  getSettings, getSettingByKey, upsertSetting, seedDefaultSettings,
   getKeywords, createKeyword, updateKeyword,
   getDashboardStats,
   getSeoTemplates, getSeoTemplateById, createSeoTemplate, updateSeoTemplate, deleteSeoTemplate, seedSeoTemplates,
   getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
+  getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
+  getGenerationItemsByBatch, createGenerationItems, updateGenerationItem, getPendingGenerationItems, countGenerationItems,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
-import {
-  getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
-  getGenerationItems, createGenerationItems, getGenerationBatchProgress,
-} from "./db";
-import {
-  startBatchWorker, pauseBatchWorker, resumeBatchWorker, cancelBatchWorker, isBatchWorkerActive,
-} from "./batchGenerationWorker";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
@@ -179,14 +174,42 @@ const contentRouter = router({
 
   generate: protectedProcedure.input(z.object({
     keyword: z.string().min(1),
+    title: z.string().optional(),
     language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
     minWords: z.number().default(800),
     style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
+    // 指定插入内容
+    insertKeywords: z.array(z.string()).optional(),   // 必须出现的关键词
+    anchorLinks: z.array(z.object({                   // 锚文本+超链接
+      anchorText: z.string(),
+      url: z.string(),
+      position: z.enum(["intro", "body", "end"]).default("body"),
+    })).optional(),
+    insertParagraph: z.string().optional(),           // 指定插入段落（原文内容）
   })).mutation(async ({ input }) => {
     const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
     const langName = langMap[input.language];
     const styleMap = { informational: "信息型（科普、解答）", commercial: "商业型（推广、评测）", navigational: "导航型（品牌、官网）" };
     const styleName = styleMap[input.style];
+
+    // 构建关键词和链接要求
+    let insertHints = "";
+    if (input.insertKeywords && input.insertKeywords.length > 0) {
+      insertHints += `\n\n【必须要求】以下关键词必须自然地出现在文章中（每个至少出现一次）：${input.insertKeywords.join("、")}`;
+    }
+    if (input.anchorLinks && input.anchorLinks.length > 0) {
+      const introLinks = input.anchorLinks.filter(l => l.position === "intro");
+      const bodyLinks = input.anchorLinks.filter(l => l.position === "body");
+      const endLinks = input.anchorLinks.filter(l => l.position === "end");
+      if (introLinks.length > 0) insertHints += `\n\n【引言链接】在文章引言部分自然插入：${introLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+      if (bodyLinks.length > 0) insertHints += `\n\n【正文链接】在文章正文适当位置插入：${bodyLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+      if (endLinks.length > 0) insertHints += `\n\n【末尾链接】在文章末尾「相关推荐」部分插入：${endLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+    }
+    if (input.insertParagraph) {
+      insertHints += `\n\n【指定插入内容】必须将以下内容自然融入文章正文中：\n${input.insertParagraph}`;
+    }
+
+    const titleHint = input.title ? `文章标题已指定为：「${input.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
     const response = await invokeLLM({
       messages: [
@@ -197,13 +220,13 @@ const contentRouter = router({
 2. 文章类型：${styleName}
 3. 字数：不少于${input.minWords}字
 4. 结构：包含标题（H1）、多个小节（H2/H3）、段落正文
-5. SEO要求：关键词密度0.5%-2%，自然融入，避免堆砌
+5. SEO要求：关键词密度0.5%-2%，自然融入，避免堆砂
 6. 防封策略：内容原创、表述自然、避免广告语气
-7. 返回JSON格式`,
+7. 返回JSON格式${insertHints}`,
         },
         {
           role: "user",
-          content: `请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回JSON格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
+          content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回JSON格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
         },
       ],
       response_format: {
@@ -229,18 +252,23 @@ const contentRouter = router({
     const content = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
 
+    // 读取质量分阈值设置，自动确定状态
+    const thresholdRow = await getSettingByKey("auto_approve_threshold");
+    const threshold = thresholdRow ? parseInt(thresholdRow.value ?? "0") : 0;
+    const autoStatus = threshold > 0 && parsed.qualityScore >= threshold ? "approved" : "pending";
+
     // Save to materials
     await createMaterial({
-      title: parsed.title,
+      title: input.title || parsed.title,
       keyword: input.keyword,
       language: input.language,
       content: parsed.content,
       wordCount: parsed.wordCount,
       qualityScore: parsed.qualityScore,
-      status: "pending",
+      status: autoStatus,
     });
 
-    return { success: true, title: parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore };
+    return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved" };
   }),
 
   batchGenerate: protectedProcedure.input(z.object({
@@ -815,125 +843,263 @@ const publisherRouter = router({
   }),
 });
 
-// ─── Batch Generation ───────────────────────────────────────────────────────────────
+// ─── Batch Generation ──────────────────────────────────────────────────────────────────────────────
+// In-memory worker state
+const workerState: Record<number, { running: boolean; timer?: ReturnType<typeof setTimeout> }> = {};
+
+async function runBatchWorker(batchId: number) {
+  const batch = await getGenerationBatchById(batchId);
+  if (!batch || batch.status !== "running") return;
+
+  const concurrency = batch.concurrency ?? 3;
+  const items = await getPendingGenerationItems(batchId, concurrency);
+  if (items.length === 0) {
+    // No more pending items - check if all done
+    const counts = await countGenerationItems(batchId);
+    if (counts.pending === 0) {
+      await updateGenerationBatch(batchId, {
+        status: "completed",
+        completedAt: new Date(),
+        completedCount: counts.completed,
+        failedCount: counts.failed,
+      });
+      if (workerState[batchId]) {
+        workerState[batchId].running = false;
+      }
+    }
+    return;
+  }
+
+  // Process items concurrently
+  await Promise.allSettled(items.map(async (item) => {
+    await updateGenerationItem(item.id, { status: "running", startedAt: new Date() });
+    try {
+      const langMap: Record<string, string> = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
+      const langName = langMap[batch.language] ?? "简体中文";
+      const styleMap: Record<string, string> = { informational: "信息型", commercial: "商业型", navigational: "导航型" };
+      const styleName = styleMap[batch.style] ?? "信息型";
+
+      let insertHints = "";
+      const insertKeywords = batch.insertKeywords as string[] | null;
+      const anchorLinks = batch.anchorLinks as { anchorText: string; url: string; position: string }[] | null;
+      if (insertKeywords && insertKeywords.length > 0) {
+        insertHints += `\n\n【必须要求】以下关键词必须自然地出现在文章中：${insertKeywords.join("、")}`;
+      }
+      if (anchorLinks && anchorLinks.length > 0) {
+        const endLinks = anchorLinks.filter(l => l.position === "end");
+        const bodyLinks = anchorLinks.filter(l => l.position !== "end" && l.position !== "intro");
+        const introLinks = anchorLinks.filter(l => l.position === "intro");
+        if (introLinks.length > 0) insertHints += `\n\n【引言链接】${introLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+        if (bodyLinks.length > 0) insertHints += `\n\n【正文链接】${bodyLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+        if (endLinks.length > 0) insertHints += `\n\n【末尾链接】${endLinks.map(l => `[${l.anchorText}](${l.url})`).join("、")}`;
+      }
+      if (batch.insertParagraph) {
+        insertHints += `\n\n【指定插入内容】必须将以下内容自然融入文章正文中：\n${batch.insertParagraph}`;
+      }
+      const titleHint = item.title ? `文章标题已指定为：「${item.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
+
+      const response = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `你是专业的SEO内容创作专家。要求：语言${langName}，类型${styleName}，字数不少于${batch.minWords}字，包含H1/H2/H3结构，SEO关键词密度0.5%-2%，返回JSON格式。${insertHints}`,
+          },
+          {
+            role: "user",
+            content: `${titleHint}请为关键词「${item.keyword}」创作高质量SEO文章。返回JSON：{"title": "标题", "content": "正文(Markdown)", "wordCount": 字数, "qualityScore": 质量分(0-100)}`,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "article_result",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                content: { type: "string" },
+                wordCount: { type: "number" },
+                qualityScore: { type: "number" },
+              },
+              required: ["title", "content", "wordCount", "qualityScore"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+
+      const rawContent = response.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent));
+
+      // Auto-approve based on threshold
+      const threshold = batch.autoApproveThreshold ?? 0;
+      const autoStatus = threshold > 0 && parsed.qualityScore >= threshold ? "approved" : "pending";
+
+      await createMaterial({
+        title: item.title || parsed.title,
+        keyword: item.keyword,
+        language: batch.language,
+        content: parsed.content,
+        wordCount: parsed.wordCount,
+        qualityScore: parsed.qualityScore,
+        status: autoStatus,
+      });
+
+      await updateGenerationItem(item.id, {
+        status: "completed",
+        completedAt: new Date(),
+        generatedTitle: item.title || parsed.title,
+        wordCount: parsed.wordCount,
+        qualityScore: parsed.qualityScore,
+      });
+
+      // Update batch progress
+      const counts = await countGenerationItems(batchId);
+      await updateGenerationBatch(batchId, {
+        completedCount: counts.completed,
+        failedCount: counts.failed,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const retryCount = (item.retryCount ?? 0) + 1;
+      if (retryCount >= 3) {
+        await updateGenerationItem(item.id, { status: "failed", completedAt: new Date(), errorMessage: msg, retryCount });
+      } else {
+        await updateGenerationItem(item.id, { status: "pending", retryCount });
+      }
+    }
+  }));
+
+  // Schedule next batch if still running
+  const updatedBatch = await getGenerationBatchById(batchId);
+  if (updatedBatch?.status === "running" && workerState[batchId]?.running) {
+    workerState[batchId].timer = setTimeout(() => runBatchWorker(batchId), 1000);
+  }
+}
+
 const batchGenerationRouter = router({
-  // 获取所有批次列表
   list: protectedProcedure.query(async () => {
     return getGenerationBatches();
   }),
 
-  // 获取单个批次详情
   get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
-    return getGenerationBatchById(input.id);
-  }),
-
-  // 获取批次进度
-  progress: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const batch = await getGenerationBatchById(input.id);
     if (!batch) throw new Error("批次不存在");
-    const progress = await getGenerationBatchProgress(input.id);
-    return {
-      ...batch,
-      ...progress,
-      isWorkerActive: isBatchWorkerActive(input.id),
-    };
+    const counts = await countGenerationItems(input.id);
+    return { ...batch, counts };
   }),
 
-  // 获取批次条目列表
-  items: protectedProcedure.input(z.object({
-    batchId: z.number(),
-    status: z.string().optional(),
-  })).query(async ({ input }) => {
-    return getGenerationItems(input.batchId, input.status);
+  getItems: protectedProcedure.input(z.object({ batchId: z.number() })).query(async ({ input }) => {
+    return getGenerationItemsByBatch(input.batchId);
   }),
 
-  // 创建批次并导入条目
   create: protectedProcedure.input(z.object({
     name: z.string().min(1),
-    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
-    style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
-    minWords: z.number().default(800),
-    concurrency: z.number().min(1).max(10).default(3),
-    seoTemplateId: z.number().optional(),
-    autoPublish: z.boolean().default(false),
-    // 条目列表：每条包含 keyword（必填）和可选 title
     items: z.array(z.object({
       keyword: z.string().min(1),
       title: z.string().optional(),
-      extraKeywords: z.array(z.string()).optional(),
-    })).min(1).max(50000),
+    })),
+    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    minWords: z.number().default(800),
+    style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
+    concurrency: z.number().min(1).max(10).default(3),
+    insertKeywords: z.array(z.string()).optional(),
+    anchorLinks: z.array(z.object({
+      anchorText: z.string(),
+      url: z.string(),
+      position: z.enum(["intro", "body", "end"]).default("body"),
+    })).optional(),
+    insertParagraph: z.string().optional(),
+    autoApproveThreshold: z.number().min(0).max(100).default(0),
+    autoQueue: z.boolean().default(false),
   })).mutation(async ({ input }) => {
-    const totalCount = input.items.length;
-    const batch = await createGenerationBatch({
-      name: input.name,
-      totalCount,
-      pendingCount: totalCount,
-      runningCount: 0,
-      successCount: 0,
-      failedCount: 0,
+    const { items, ...batchData } = input;
+    await createGenerationBatch({
+      ...batchData,
+      totalCount: items.length,
       status: "pending",
-      language: input.language,
-      style: input.style,
-      minWords: input.minWords,
-      concurrency: input.concurrency,
-      seoTemplateId: input.seoTemplateId,
-      autoPublish: input.autoPublish,
     });
-    if (!batch) throw new Error("创建批次失败");
-
-    // 批量插入条目
-    await createGenerationItems(input.items.map((item, idx) => ({
+    // Get the newly created batch
+    const batches = await getGenerationBatches();
+    const batch = batches[0];
+    if (!batch) throw new Error("创建失败");
+    // Insert items in bulk
+    await createGenerationItems(items.map(item => ({
       batchId: batch.id,
-      rowIndex: idx,
       keyword: item.keyword,
-      title: item.title ?? null,
-      extraKeywords: item.extraKeywords ?? [],
+      title: item.title,
       status: "pending" as const,
-      retryCount: 0,
     })));
-
-    return { success: true, batchId: batch.id, totalCount };
+    return { success: true, batchId: batch.id, totalCount: items.length };
   }),
 
-  // 启动批次
   start: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const batch = await getGenerationBatchById(input.id);
     if (!batch) throw new Error("批次不存在");
-    if (batch.status === "running") return { success: true, message: "批次已在运行中" };
-    await startBatchWorker(input.id);
-    return { success: true, message: `批次已启动，并发数: ${batch.concurrency}` };
+    if (batch.status === "running") return { success: true, message: "已在运行中" };
+    await updateGenerationBatch(input.id, { status: "running", startedAt: new Date() });
+    workerState[input.id] = { running: true };
+    // Start worker asynchronously
+    setTimeout(() => runBatchWorker(input.id), 100);
+    return { success: true, message: "已启动" };
   }),
 
-  // 暂停批次
   pause: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    pauseBatchWorker(input.id);
+    await updateGenerationBatch(input.id, { status: "paused" });
+    if (workerState[input.id]) {
+      workerState[input.id].running = false;
+      if (workerState[input.id].timer) clearTimeout(workerState[input.id].timer);
+    }
     return { success: true };
   }),
 
-  // 继续批次
   resume: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    resumeBatchWorker(input.id);
     await updateGenerationBatch(input.id, { status: "running" });
+    workerState[input.id] = { running: true };
+    setTimeout(() => runBatchWorker(input.id), 100);
     return { success: true };
   }),
 
-  // 取消批次
   cancel: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    cancelBatchWorker(input.id);
-    await updateGenerationBatch(input.id, { status: "cancelled" });
+    await updateGenerationBatch(input.id, { status: "failed", completedAt: new Date() });
+    if (workerState[input.id]) {
+      workerState[input.id].running = false;
+      if (workerState[input.id].timer) clearTimeout(workerState[input.id].timer);
+    }
     return { success: true };
   }),
 
-  // 删除批次
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    cancelBatchWorker(input.id);
+    if (workerState[input.id]) {
+      workerState[input.id].running = false;
+      if (workerState[input.id].timer) clearTimeout(workerState[input.id].timer);
+      delete workerState[input.id];
+    }
     await deleteGenerationBatch(input.id);
     return { success: true };
   }),
+
+  progress: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const batch = await getGenerationBatchById(input.id);
+    if (!batch) throw new Error("批次不存在");
+    const counts = await countGenerationItems(input.id);
+    const percent = batch.totalCount > 0 ? Math.round((counts.completed / batch.totalCount) * 100) : 0;
+    return {
+      batchId: input.id,
+      status: batch.status,
+      totalCount: batch.totalCount,
+      completedCount: counts.completed,
+      failedCount: counts.failed,
+      pendingCount: counts.pending,
+      percent,
+    };
+  }),
 });
 
-// ─── App Router ────────────────────────────────────────────────────────────────────────────────────
-export const appRouter = router({m: systemRouter,
+// ─── App Router ───────────────────────────────────────────────────────────────────────────────
+export const appRouter = router({
+  system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

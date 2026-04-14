@@ -332,7 +332,7 @@ export async function getDashboardStats() {
   };
 }
 
-// ─── SEO Templates ───────────────────────────────────────────────────────────────
+// ─── SEO Templates ────────────────────────────────────────────────────────────
 export async function getSeoTemplates() {
   const db = await getDb();
   if (!db) return [];
@@ -518,7 +518,7 @@ export async function deleteGoogleSite(id: number) {
   await db.delete(googleSites).where(eq(googleSites.id, id));
 }
 
-// ─── Generation Batches ───────────────────────────────────────────────────────
+// ─── Generation Batches ────────────────────────────────────────────────────────
 export async function getGenerationBatches() {
   const db = await getDb();
   if (!db) return [];
@@ -535,8 +535,7 @@ export async function getGenerationBatchById(id: number) {
 export async function createGenerationBatch(data: InsertGenerationBatch) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(generationBatches).values(data);
-  const result = await db.select().from(generationBatches).orderBy(desc(generationBatches.id)).limit(1);
+  const result = await db.insert(generationBatches).values(data);
   return result[0];
 }
 
@@ -549,38 +548,26 @@ export async function updateGenerationBatch(id: number, data: Partial<InsertGene
 export async function deleteGenerationBatch(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // 先删除所有条目
   await db.delete(generationItems).where(eq(generationItems.batchId, id));
   await db.delete(generationBatches).where(eq(generationBatches.id, id));
 }
 
-// ─── Generation Items ─────────────────────────────────────────────────────────
-export async function getGenerationItems(batchId: number, status?: string) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [eq(generationItems.batchId, batchId)];
-  if (status) conditions.push(eq(generationItems.status, status as any));
-  return db.select().from(generationItems)
-    .where(and(...conditions))
-    .orderBy(generationItems.rowIndex);
-}
-
-export async function getGenerationItemsPending(batchId: number, limit: number) {
+// ─── Generation Items ──────────────────────────────────────────────────────────
+export async function getGenerationItemsByBatch(batchId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(generationItems)
-    .where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "pending")))
-    .orderBy(generationItems.rowIndex)
-    .limit(limit);
+    .where(eq(generationItems.batchId, batchId))
+    .orderBy(generationItems.id);
 }
 
 export async function createGenerationItems(items: InsertGenerationItem[]) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // 分批插入，每批 500 条，避免超出 MySQL 单次插入限制
-  const chunkSize = 500;
-  for (let i = 0; i < items.length; i += chunkSize) {
-    await db.insert(generationItems).values(items.slice(i, i + chunkSize));
+  if (items.length === 0) return;
+  // Insert in chunks of 500 to avoid query size limits
+  for (let i = 0; i < items.length; i += 500) {
+    await db.insert(generationItems).values(items.slice(i, i + 500));
   }
 }
 
@@ -590,19 +577,28 @@ export async function updateGenerationItem(id: number, data: Partial<InsertGener
   await db.update(generationItems).set(data).where(eq(generationItems.id, id));
 }
 
-export async function getGenerationBatchProgress(batchId: number) {
+export async function getPendingGenerationItems(batchId: number, limit: number = 10) {
   const db = await getDb();
-  if (!db) return { total: 0, pending: 0, running: 0, success: 0, failed: 0 };
-  const [total] = await db.select({ count: count() }).from(generationItems).where(eq(generationItems.batchId, batchId));
-  const [pending] = await db.select({ count: count() }).from(generationItems).where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "pending")));
-  const [running] = await db.select({ count: count() }).from(generationItems).where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "running")));
-  const [success] = await db.select({ count: count() }).from(generationItems).where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "success")));
-  const [failed] = await db.select({ count: count() }).from(generationItems).where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "failed")));
-  return {
-    total: total?.count ?? 0,
-    pending: pending?.count ?? 0,
-    running: running?.count ?? 0,
-    success: success?.count ?? 0,
-    failed: failed?.count ?? 0,
-  };
+  if (!db) return [];
+  return db.select().from(generationItems)
+    .where(and(eq(generationItems.batchId, batchId), eq(generationItems.status, "pending")))
+    .limit(limit)
+    .orderBy(generationItems.id);
+}
+
+export async function countGenerationItems(batchId: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, completed: 0, failed: 0, pending: 0 };
+  const rows = await db.select({
+    status: generationItems.status,
+    cnt: count(),
+  }).from(generationItems).where(eq(generationItems.batchId, batchId)).groupBy(generationItems.status);
+  const result = { total: 0, completed: 0, failed: 0, pending: 0 };
+  for (const r of rows) {
+    result.total += Number(r.cnt);
+    if (r.status === "completed") result.completed = Number(r.cnt);
+    else if (r.status === "failed") result.failed = Number(r.cnt);
+    else if (r.status === "pending") result.pending = Number(r.cnt);
+  }
+  return result;
 }

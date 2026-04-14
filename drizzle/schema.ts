@@ -218,50 +218,54 @@ export const keywords = mysqlTable("keywords", {
 export type Keyword = typeof keywords.$inferSelect;
 export type InsertKeyword = typeof keywords.$inferInsert;
 
-// ─── 批量生成批次表 ───────────────────────────────────────────────────────────────
+// ─── 批量生成批次表 ────────────────────────────────────────────────────────────
 export const generationBatches = mysqlTable("generation_batches", {
   id: int("id").autoincrement().primaryKey(),
-  name: varchar("name", { length: 256 }).notNull(),          // 批次名称（如 "2026-04-13 批次1"）
-  totalCount: int("totalCount").default(0).notNull(),        // 总条数
-  pendingCount: int("pendingCount").default(0).notNull(),    // 待处理
-  runningCount: int("runningCount").default(0).notNull(),    // 生成中
-  successCount: int("successCount").default(0).notNull(),   // 成功
-  failedCount: int("failedCount").default(0).notNull(),     // 失败
-  status: mysqlEnum("status", ["pending", "running", "paused", "completed", "cancelled"]).default("pending").notNull(),
+  name: varchar("name", { length: 256 }).notNull(),
+  status: mysqlEnum("status", ["pending", "running", "paused", "completed", "failed"]).default("pending").notNull(),
+  totalCount: int("totalCount").default(0).notNull(),
+  completedCount: int("completedCount").default(0).notNull(),
+  failedCount: int("failedCount").default(0).notNull(),
+  // 生成配置
   language: mysqlEnum("language", ["zh-CN", "en", "zh-TW"]).default("zh-CN").notNull(),
-  style: mysqlEnum("style", ["informational", "commercial", "navigational"]).default("informational").notNull(),
-  seoTemplateId: int("seoTemplateId"),                      // 使用的 SEO 模板（可选）
   minWords: int("minWords").default(800).notNull(),
-  concurrency: int("concurrency").default(3).notNull(),     // 并发数（1-10）
-  autoPublish: boolean("autoPublish").default(false),       // 生成后自动加入发布队列
+  style: mysqlEnum("style", ["informational", "commercial", "navigational"]).default("informational").notNull(),
+  concurrency: int("concurrency").default(3).notNull(),
+  // 指定插入内容（全局配置）
+  insertKeywords: json("insertKeywords"),   // string[]
+  anchorLinks: json("anchorLinks"),         // {anchorText, url, position}[]
+  insertParagraph: text("insertParagraph"),
+  // 自动通过阈值（0=不自动通过）
+  autoApproveThreshold: int("autoApproveThreshold").default(0),
+  // 生成后自动加入发布队列
+  autoQueue: boolean("autoQueue").default(false),
+  // 时间
   startedAt: timestamp("startedAt"),
   completedAt: timestamp("completedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type GenerationBatch = typeof generationBatches.$inferSelect;
 export type InsertGenerationBatch = typeof generationBatches.$inferInsert;
 
-// ─── 批量生成条目表 ───────────────────────────────────────────────────────────────
+// ─── 批量生成条目表 ────────────────────────────────────────────────────────────
 export const generationItems = mysqlTable("generation_items", {
   id: int("id").autoincrement().primaryKey(),
-  batchId: int("batchId").notNull(),                        // 所属批次 ID
-  rowIndex: int("rowIndex").notNull(),                      // 原始导入行号（用于排序）
-  title: varchar("title", { length: 512 }),                 // 指定标题（可选，为空则 AI 生成）
-  keyword: varchar("keyword", { length: 256 }).notNull(),   // 主关键词（必填）
-  extraKeywords: json("extraKeywords"),                     // 附加关键词列表 string[]
-  status: mysqlEnum("status", ["pending", "running", "success", "failed", "skipped"]).default("pending").notNull(),
-  materialId: int("materialId"),                            // 生成成功后关联的素材 ID
-  errorMessage: text("errorMessage"),                       // 失败原因
-  retryCount: int("retryCount").default(0).notNull(),
-  generatedTitle: varchar("generatedTitle", { length: 512 }), // AI 生成的标题
-  generatedWordCount: int("generatedWordCount"),
-  generatedQualityScore: float("generatedQualityScore"),
+  batchId: int("batchId").notNull(),
+  keyword: varchar("keyword", { length: 512 }).notNull(),
+  title: varchar("title", { length: 512 }),  // 可选：指定标题
+  status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
+  retryCount: int("retryCount").default(0),
+  // 生成结果
+  materialId: int("materialId"),
+  generatedTitle: varchar("generatedTitle", { length: 512 }),
+  wordCount: int("wordCount"),
+  qualityScore: float("qualityScore"),
+  errorMessage: text("errorMessage"),
+  // 时间
   startedAt: timestamp("startedAt"),
   completedAt: timestamp("completedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
-
 export type GenerationItem = typeof generationItems.$inferSelect;
 export type InsertGenerationItem = typeof generationItems.$inferInsert;

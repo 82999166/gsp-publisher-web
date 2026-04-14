@@ -67,6 +67,7 @@ export default function Settings() {
     publishConcurrency: 1,
     publishUserAgent: "",
     headlessBrowser: true,
+    autoApproveThreshold: 0,
     // gsc
     gscEnabled: false,
     gscClientEmail: "",
@@ -363,6 +364,18 @@ export default function Settings() {
                   onChange={e => setField("publishUserAgent", e.target.value)}
                   placeholder="留空使用默认 Chrome User-Agent"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label>自动通过质量分阈值（0=不自动通过）</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.autoApproveThreshold ?? 0}
+                  onChange={e => setField("autoApproveThreshold", parseInt(e.target.value) || 0)}
+                  placeholder="例如 70，则质量分≥70 的文章自动通过审核"
+                />
+                <p className="text-xs text-muted-foreground">设置后，生成的文章质量分达到阈值就自动进入已审核状态，无需人工审核</p>
               </div>
             </div>
           )}
