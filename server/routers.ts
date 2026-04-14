@@ -992,6 +992,60 @@ const sitesRouter = router({
 
 // ─── Publisher Engine ─────────────────────────────────────────────────────────
 const publisherRouter = router({
+  // 诊断端点：查询生产环境 Chromium 状态
+  chromiumDiag: protectedProcedure.query(async () => {
+    const fsModule = await import("fs");
+    const osModule = await import("os");
+    const diag: Record<string, unknown> = {
+      platform: process.platform,
+      arch: process.arch,
+      cwd: process.cwd(),
+      homeDir: osModule.homedir(),
+      env_PUPPETEER_CACHE_DIR: process.env.PUPPETEER_CACHE_DIR ?? null,
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const puppeteer = require("puppeteer");
+      const p = puppeteer.executablePath() as string;
+      diag.puppeteer_executablePath = p;
+      try {
+        const stat = fsModule.statSync(p);
+        diag.puppeteer_chrome_exists = true;
+        diag.puppeteer_chrome_size = stat.size;
+        diag.puppeteer_chrome_executable = !!(stat.mode & 0o111);
+      } catch (e: unknown) {
+        diag.puppeteer_chrome_exists = false;
+        diag.puppeteer_chrome_error = String(e);
+      }
+    } catch (e: unknown) {
+      diag.puppeteer_error = String(e);
+    }
+    const candidates = [
+      "/usr/lib/chromium-browser/chromium-browser",
+      "/usr/bin/chromium",
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/google-chrome",
+    ];
+    diag.system_candidates = candidates.map(p => {
+      try {
+        const stat = fsModule.statSync(p);
+        return { path: p, exists: true, size: stat.size, executable: !!(stat.mode & 0o111) };
+      } catch {
+        return { path: p, exists: false };
+      }
+    });
+    try {
+      const cacheDir = `${osModule.homedir()}/.cache/puppeteer`;
+      diag.cache_dir = cacheDir;
+      diag.cache_dir_exists = fsModule.existsSync(cacheDir);
+      if (diag.cache_dir_exists) {
+        diag.cache_dir_contents = fsModule.readdirSync(cacheDir);
+      }
+    } catch (e: unknown) {
+      diag.cache_dir_error = String(e);
+    }
+    return diag;
+  }),
   verifyCookie: protectedProcedure.input(z.object({
     accountId: z.number(),
   })).mutation(async ({ input }) => {
@@ -1377,7 +1431,7 @@ const batchGenerationRouter = router({
   }),
 });
 
-// ─── Published Pages Router ─────────────────────────────────────────────────────────────────
+// ─── Published Pages Router ─────────────────────────────────────────────────────────────────────────────────
 const publishedPagesRouter = router({
   list: protectedProcedure.input(z.object({
     keyword: z.string().optional(),
