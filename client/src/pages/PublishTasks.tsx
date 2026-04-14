@@ -16,8 +16,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import {
+  AlertCircle,
   CheckCircle2,
   ExternalLink,
   HelpCircle,
@@ -48,6 +57,14 @@ const statusLabel: Record<string, string> = {
   success: "已成功",
   failed: "已失败",
   scheduled: "已计划",
+};
+
+const statusClass: Record<string, string> = {
+  pending: "bg-amber-50 text-amber-700 border border-amber-200",
+  running: "bg-blue-50 text-blue-700 border border-blue-200",
+  success: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+  failed: "bg-red-50 text-red-700 border border-red-200",
+  scheduled: "bg-purple-50 text-purple-700 border border-purple-200",
 };
 
 export default function PublishTasks() {
@@ -129,6 +146,7 @@ export default function PublishTasks() {
         </div>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-5 gap-4">
         {[
           { label: "全部任务", value: tasks.length, color: "text-foreground" },
@@ -144,6 +162,7 @@ export default function PublishTasks() {
         ))}
       </div>
 
+      {/* Notice */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
         <Zap className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
         <div className="text-sm">
@@ -154,6 +173,7 @@ export default function PublishTasks() {
         </div>
       </div>
 
+      {/* Table */}
       <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground text-sm">加载中...</div>
@@ -164,32 +184,37 @@ export default function PublishTasks() {
             <p className="text-xs text-muted-foreground mt-1">点击「新建任务」创建发布计划</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>任务名称</th>
-                <th>账号</th>
-                <th>状态</th>
-                <th>发布链接</th>
-                <th>计划时间</th>
-                <th>完成时间</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task: Task) => {
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>任务名称</TableHead>
+                <TableHead>账号</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>发布链接</TableHead>
+                <TableHead>错误信息</TableHead>
+                <TableHead>计划时间</TableHead>
+                <TableHead>完成时间</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(tasks as Task[]).map((task) => {
                 const account = (accounts as any[]).find((a: any) => a.id === task.accountId);
                 return (
-                  <tr key={task.id}>
-                    <td>
+                  <TableRow key={task.id}>
+                    <TableCell>
                       <div className="font-medium text-foreground text-sm">{task.name}</div>
-                      {task.errorMessage && (
-                        <div className="text-xs text-red-600 mt-0.5 truncate max-w-[200px]">{task.errorMessage}</div>
-                      )}
-                    </td>
-                    <td className="text-sm text-muted-foreground">{account?.name ?? `#${task.accountId}`}</td>
-                    <td><span className={`badge-${task.status}`}>{statusLabel[task.status] ?? task.status}</span></td>
-                    <td>
+                      <div className="text-xs text-muted-foreground mt-0.5">#{task.id}</div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {account?.name ?? `#${task.accountId}`}
+                    </TableCell>
+                    <TableCell>
+                      <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${statusClass[task.status] ?? "bg-muted text-muted-foreground"}`}>
+                        {statusLabel[task.status] ?? task.status}
+                      </span>
+                    </TableCell>
+                    <TableCell>
                       {task.publishedUrl ? (
                         <a
                           href={task.publishedUrl}
@@ -198,19 +223,29 @@ export default function PublishTasks() {
                           className="text-xs text-primary hover:underline flex items-center gap-1"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          查看
+                          查看链接
                         </a>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
-                    </td>
-                    <td className="text-xs text-muted-foreground">
+                    </TableCell>
+                    <TableCell>
+                      {task.errorMessage ? (
+                        <div className="flex items-start gap-1 max-w-[200px]">
+                          <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
+                          <span className="text-xs text-red-600 line-clamp-2">{task.errorMessage}</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
                       {task.scheduledAt ? new Date(task.scheduledAt).toLocaleString("zh-CN") : "立即"}
-                    </td>
-                    <td className="text-xs text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
                       {task.completedAt ? new Date(task.completedAt).toLocaleString("zh-CN") : "—"}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <div className="flex items-center justify-end gap-1">
                         {task.status === "pending" && (
                           <Button
@@ -261,15 +296,16 @@ export default function PublishTasks() {
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
 
+      {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -293,30 +329,27 @@ export default function PublishTasks() {
                 </SelectTrigger>
                 <SelectContent>
                   {(accounts as any[]).map((a: any) => (
-                    <SelectItem key={a.id} value={String(a.id)}>
-                      {a.name}
-                    </SelectItem>
+                    <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>使用素材</Label>
+              <Label>关联素材（可选）</Label>
               <Select value={form.materialId} onValueChange={v => setForm(f => ({ ...f, materialId: v }))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择已通过审核的素材（可选）" />
+                  <SelectValue placeholder="选择已通过审核的素材" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="">不关联素材</SelectItem>
                   {(materials as any[]).map((m: any) => (
-                    <SelectItem key={m.id} value={String(m.id)}>
-                      {m.title}
-                    </SelectItem>
+                    <SelectItem key={m.id} value={String(m.id)}>{m.title}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>计划执行时间</Label>
+              <Label>计划执行时间（可选）</Label>
               <Input
                 type="datetime-local"
                 value={form.scheduledAt}
@@ -326,25 +359,30 @@ export default function PublishTasks() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>取消</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
-              {createMutation.isPending ? "创建中..." : "创建任务"}
+              {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              创建任务
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Help Dialog */}
       <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>发布任务使用说明</DialogTitle>
+            <DialogTitle>发布任务说明</DialogTitle>
           </DialogHeader>
-          <div className="text-sm text-muted-foreground space-y-3">
-            <p><strong className="text-foreground">1. 创建任务：</strong>选择账号和素材，创建发布任务。支持立即执行或定时发布。</p>
-            <p><strong className="text-foreground">2. 执行流程：</strong>系统通过 Playwright 自动化浏览器登录 Google Sites 并发布内容。</p>
-            <p><strong className="text-foreground">3. 任务状态：</strong>待执行→执行中→已成功/已失败。失败任务可查看错误信息。</p>
-            <p><strong className="text-foreground">4. 发布成功：</strong>成功后自动创建收录监控记录，可在「收录监控」页面查看。</p>
-            <p><strong className="text-foreground">5. 注意事项：</strong>需要先配置代理服务器（在系统设置中），以确保能访问 Google 服务。</p>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p><strong className="text-foreground">发布流程：</strong>创建任务 → 点击「执行」→ 系统自动登录 Google 账号 → 在 Google Sites 创建页面 → 发布成功后保存链接。</p>
+            <p><strong className="text-foreground">前提条件：</strong></p>
+            <ul className="list-disc list-inside space-y-1 ml-2">
+              <li>账号 Cookie 有效（在账号管理中验证）</li>
+              <li>已配置代理服务器（系统设置 → 代理配置）</li>
+              <li>关联素材已通过审核</li>
+            </ul>
+            <p><strong className="text-foreground">状态说明：</strong>待执行 → 执行中 → 已成功/已失败</p>
           </div>
         </DialogContent>
       </Dialog>

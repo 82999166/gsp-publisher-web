@@ -2,9 +2,14 @@
  * Google Sites Publisher Engine
  * 使用 Puppeteer 模拟真人操作，通过 Cookie 登录 Google Sites 并发布文章
  */
-import puppeteer, { Browser, Page } from "puppeteer-core";
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import type { Browser, Page } from "puppeteer-core";
 
 const CHROMIUM_PATH = "/usr/bin/chromium-browser";
+
+// 注册 Stealth 插件（绕过 Google 反爬虫检测）
+puppeteerExtra.use(StealthPlugin());
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 export interface PublishOptions {
@@ -126,13 +131,13 @@ export class GoogleSitesPublisher {
       args.push(`--proxy-server=${options.proxy.host}:${options.proxy.port}`);
     }
 
-    const browser = await puppeteer.launch({
+    const browser = await puppeteerExtra.launch({
       executablePath: CHROMIUM_PATH,
       headless: options.headless !== false,
       args,
       defaultViewport: { width: 1280, height: 800 },
       timeout: options.timeout ?? 120000,
-    });
+    } as any);
 
     this.addLog("浏览器已启动");
     return browser;

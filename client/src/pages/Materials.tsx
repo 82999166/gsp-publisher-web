@@ -13,6 +13,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -327,60 +335,60 @@ export default function Materials() {
             <p className="text-xs text-muted-foreground mt-1">前往「AI内容生成」生成文章</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th className="w-10">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">
                   <input
                     type="checkbox"
                     checked={selectedIds.length === filtered.length && filtered.length > 0}
                     onChange={toggleAll}
                     className="rounded"
                   />
-                </th>
-                <th>标题</th>
-                <th>关键词</th>
-                <th>语言</th>
-                <th>字数</th>
-                <th>质量分</th>
-                <th>去重检测</th>
-                <th>状态</th>
-                <th>创建时间</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+                </TableHead>
+                <TableHead>标题</TableHead>
+                <TableHead>关键词</TableHead>
+                <TableHead>语言</TableHead>
+                <TableHead>字数</TableHead>
+                <TableHead>质量分</TableHead>
+                <TableHead>去重检测</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {filtered.map((m) => (
-                <tr key={m.id}>
-                  <td>
+                <TableRow key={m.id}>
+                  <TableCell>
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(m.id)}
                       onChange={() => toggleSelect(m.id)}
                       className="rounded"
                     />
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="font-medium text-foreground text-sm truncate max-w-[200px]">{m.title}</div>
-                  </td>
-                  <td className="text-sm text-muted-foreground">{m.keyword ?? "—"}</td>
-                  <td className="text-xs text-muted-foreground">{langLabel[m.language] ?? m.language}</td>
-                  <td className="text-sm tabular-nums">{m.wordCount ?? "—"}</td>
-                  <td className="w-28">
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{m.keyword ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{langLabel[m.language] ?? m.language}</TableCell>
+                  <TableCell className="text-sm tabular-nums">{m.wordCount ?? "—"}</TableCell>
+                  <TableCell className="w-28">
                     {m.qualityScore != null ? <QualityBar score={m.qualityScore} /> : <span className="text-xs text-muted-foreground">—</span>}
-                  </td>
-                  <td className="w-32">
+                  </TableCell>
+                  <TableCell className="w-32">
                     {m.similarityScore != null ? (
                       <SimilarityBadge score={m.similarityScore} />
                     ) : (
                       <span className="text-xs text-muted-foreground">未检测</span>
                     )}
-                  </td>
-                  <td><span className={`badge-${m.status}`}>{statusLabel[m.status] ?? m.status}</span></td>
-                  <td className="text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell><span className={`badge-${m.status}`}>{statusLabel[m.status] ?? m.status}</span></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {m.createdAt ? new Date(m.createdAt).toLocaleDateString("zh-CN") : "—"}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center justify-end gap-1">
                       <Button
                         variant="ghost"
@@ -441,11 +449,11 @@ export default function Materials() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
 

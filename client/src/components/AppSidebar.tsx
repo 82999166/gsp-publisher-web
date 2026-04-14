@@ -34,6 +34,7 @@ import {
   MonitorCheck,
   Layers,
   BookMarked,
+  ScrollText,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -72,6 +73,7 @@ const menuGroups = [
     label: "监控与配置",
     items: [
       { icon: MonitorCheck, label: "收录监控", path: "/indexing" },
+      { icon: ScrollText, label: "运行日志", path: "/logs" },
       { icon: Settings, label: "系统设置", path: "/settings" },
     ],
   },

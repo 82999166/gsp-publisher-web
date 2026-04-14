@@ -17,6 +17,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import {
   ExternalLink,
@@ -197,23 +205,23 @@ export default function Hyperlinks() {
             <p className="text-sm font-medium text-muted-foreground">暂无超链接</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>类型</th>
-                <th>链接/域名</th>
-                <th>锚文本</th>
-                <th>锚文本类型</th>
-                <th>权威分</th>
-                <th>分类</th>
-                <th>启用</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>类型</TableHead>
+                <TableHead>链接/域名</TableHead>
+                <TableHead>锁文本</TableHead>
+                <TableHead>锁文本类型</TableHead>
+                <TableHead>权威分</TableHead>
+                <TableHead>分类</TableHead>
+                <TableHead>启用</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {(hyperlinks as Hyperlink[]).map((link) => (
-                <tr key={link.id}>
-                  <td>
+                <TableRow key={link.id}>
+                  <TableCell>
                     <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
                       link.type === "internal"
                         ? "bg-blue-50 text-blue-700 border border-blue-200"
@@ -225,8 +233,8 @@ export default function Hyperlinks() {
                     {link.isPreset && (
                       <span className="ml-1 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">预设</span>
                     )}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       <a
                         href={link.url}
@@ -241,10 +249,10 @@ export default function Hyperlinks() {
                     {link.description && (
                       <div className="text-xs text-muted-foreground mt-0.5">{link.description}</div>
                     )}
-                  </td>
-                  <td className="text-sm text-muted-foreground">{link.anchorText ?? "—"}</td>
-                  <td className="text-xs text-muted-foreground">{link.anchorType ? anchorTypeLabel[link.anchorType] ?? link.anchorType : "—"}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{link.anchorText ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{link.anchorType ? anchorTypeLabel[link.anchorType] ?? link.anchorType : "—"}</TableCell>
+                  <TableCell>
                     {link.authorityScore != null ? (
                       <div className="flex items-center gap-1.5">
                         <div className="h-1.5 w-16 bg-muted rounded-full overflow-hidden">
@@ -256,15 +264,15 @@ export default function Hyperlinks() {
                         <span className="text-xs tabular-nums">{link.authorityScore}</span>
                       </div>
                     ) : "—"}
-                  </td>
-                  <td className="text-xs text-muted-foreground">{link.category ?? "—"}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{link.category ?? "—"}</TableCell>
+                  <TableCell>
                     <Switch
                       checked={link.isActive}
                       onCheckedChange={v => updateMutation.mutate({ id: link.id, isActive: v })}
                     />
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center justify-end">
                       {!link.isPreset && (
                         <Button
@@ -281,11 +289,11 @@ export default function Hyperlinks() {
                         </Button>
                       )}
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
 

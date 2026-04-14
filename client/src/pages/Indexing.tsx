@@ -13,6 +13,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import {
   CheckCircle2,
@@ -202,23 +210,23 @@ export default function Indexing() {
             <p className="text-xs text-muted-foreground mt-1">添加发布后的 URL 开始监控收录状态</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>关键词</th>
-                <th>收录状态</th>
-                <th>搜索排名</th>
-                <th>展示次数</th>
-                <th>点击次数</th>
-                <th>最后检测</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>URL</TableHead>
+                <TableHead>关键词</TableHead>
+                <TableHead>收录状态</TableHead>
+                <TableHead>搜索排名</TableHead>
+                <TableHead>展示次数</TableHead>
+                <TableHead>点击次数</TableHead>
+                <TableHead>最后检测</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {filtered.map((record: IndexRecord) => (
-                <tr key={record.id}>
-                  <td>
+                <TableRow key={record.id}>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       <a
                         href={record.publishedUrl}
@@ -231,9 +239,9 @@ export default function Indexing() {
                       <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[200px]">{record.publishedUrl}</div>
-                  </td>
-                  <td className="text-sm text-muted-foreground">{record.keyword ?? "—"}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{record.keyword ?? "—"}</TableCell>
+                  <TableCell>
                     <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
                       record.indexStatus === "indexed"
                         ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -244,18 +252,18 @@ export default function Indexing() {
                       {record.indexStatus === "indexed" ? <CheckCircle2 className="h-3 w-3" /> : record.indexStatus === "not_indexed" ? <XCircle className="h-3 w-3" /> : <Loader2 className="h-3 w-3" />}
                       {statusLabel[record.indexStatus] ?? record.indexStatus}
                     </span>
-                  </td>
-                  <td className="text-sm tabular-nums">
+                  </TableCell>
+                  <TableCell className="text-sm tabular-nums">
                     {record.searchPosition != null ? `#${record.searchPosition}` : "—"}
-                  </td>
-                  <td className="text-sm tabular-nums">{record.impressions ?? "—"}</td>
-                  <td className="text-sm tabular-nums">{record.clicks ?? "—"}</td>
-                  <td className="text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-sm tabular-nums">{record.impressions ?? "—"}</TableCell>
+                  <TableCell className="text-sm tabular-nums">{record.clicks ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {record.lastCheckedAt
                       ? new Date(record.lastCheckedAt).toLocaleString("zh-CN")
                       : "未检测"}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center justify-end gap-1">
                       <Button
                         variant="ghost"
@@ -280,11 +288,11 @@ export default function Indexing() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
 

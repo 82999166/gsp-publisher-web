@@ -14,6 +14,7 @@ import {
   generationBatches, InsertGenerationBatch,
   generationItems, InsertGenerationItem,
   publishedPages, InsertPublishedPage,
+  systemLogs,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -677,4 +678,60 @@ export async function getPublishedPageStats() {
     .where(eq(publishedPages.gscSubmitted, 1 as any));
   result.gscSubmitted = Number(gscRows[0]?.cnt ?? 0);
   return result;
+}
+
+// ─── System Logs ───────────────────────────────────────────────────────────────
+export async function createLog(data: {
+  level?: "info" | "warn" | "error" | "success";
+  category?: string;
+  title: string;
+  message?: string;
+  entityType?: string;
+  entityId?: number;
+  duration?: number;
+}) {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.insert(systemLogs).values({
+      level: data.level ?? "info",
+      category: data.category ?? "system",
+      title: data.title,
+      message: data.message,
+      entityType: data.entityType,
+      entityId: data.entityId,
+      duration: data.duration,
+    });
+  } catch (e) {
+    // 日志写入失败不影响主流程
+    console.warn("[SystemLog] Failed to write log:", e);
+  }
+}
+
+export async function getLogs(opts?: {
+  category?: string;
+  level?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const query = db.select().from(systemLogs).orderBy(desc(systemLogs.createdAt));
+  if (opts?.limit) {
+    return await query.limit(opts.limit).offset(opts?.offset ?? 0);
+  }
+  return await query.limit(200);
+}
+
+export async function getLogCount(opts?: { category?: string; level?: string }) {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ cnt: count() }).from(systemLogs);
+  return Number(rows[0]?.cnt ?? 0);
+}
+
+export async function clearLogs() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(systemLogs);
 }

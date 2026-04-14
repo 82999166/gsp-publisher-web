@@ -17,6 +17,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 import {
   CheckCircle2,
@@ -233,37 +241,37 @@ export default function Accounts() {
             <p className="text-xs text-muted-foreground mt-1">点击「添加账号」开始配置</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>账号名称</th>
-                <th>邮箱</th>
-                <th>状态</th>
-                <th>每日限制</th>
-                <th>站点类型</th>
-                <th>最后验证</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>账号名称</TableHead>
+                <TableHead>邮箱</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>每日限制</TableHead>
+                <TableHead>站点类型</TableHead>
+                <TableHead>最后验证</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {accounts.map((account) => (
-                <tr key={account.id}>
-                  <td>
+                <TableRow key={account.id}>
+                  <TableCell>
                     <div className="font-medium text-foreground">{account.name}</div>
                     {account.notes && (
                       <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[180px]">{account.notes}</div>
                     )}
-                  </td>
-                  <td className="text-muted-foreground text-sm">{account.email ?? "—"}</td>
-                  <td><AccountStatusBadge status={account.status} /></td>
-                  <td className="text-sm tabular-nums">{account.dailyLimit} 篇/天</td>
-                  <td className="text-sm">{siteAgeLabel[account.siteAge] ?? account.siteAge}</td>
-                  <td className="text-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{account.email ?? "—"}</TableCell>
+                  <TableCell><AccountStatusBadge status={account.status} /></TableCell>
+                  <TableCell className="text-sm tabular-nums">{account.dailyLimit} 篇/天</TableCell>
+                  <TableCell className="text-sm">{siteAgeLabel[account.siteAge] ?? account.siteAge}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
                     {account.lastVerifiedAt
                       ? new Date(account.lastVerifiedAt).toLocaleString("zh-CN")
                       : "未验证"}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center justify-end gap-1">
                       <Button
                         variant="ghost"
@@ -296,11 +304,11 @@ export default function Accounts() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
 

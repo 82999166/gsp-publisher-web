@@ -18,6 +18,7 @@ import {
   getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
   getGenerationItemsByBatch, createGenerationItems, updateGenerationItem, getPendingGenerationItems, countGenerationItems,
   getPublishedPages, countPublishedPages, createPublishedPage, updatePublishedPage, deletePublishedPage, getPublishedPageStats,
+  createLog, getLogs, getLogCount, clearLogs,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
@@ -377,6 +378,7 @@ const contentRouter = router({
       status: autoStatus,
     });
 
+    await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}` });
     return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved" };
   }),
 
@@ -409,6 +411,9 @@ const materialsRouter = router({
     status: z.enum(["pending", "approved", "rejected", "published"]),
   })).mutation(async ({ input }) => {
     await updateMaterial(input.id, { status: input.status });
+    const statusLabel: Record<string, string> = { approved: "通过", rejected: "拒绝", pending: "待审核", published: "已发布" };
+    const level = input.status === "approved" ? "success" : input.status === "rejected" ? "warn" : "info";
+    await createLog({ level, category: "review", title: `素材审核：${statusLabel[input.status] ?? input.status}`, message: `素材 #${input.id} 状态更新为「${statusLabel[input.status] ?? input.status}」`, entityType: "material", entityId: input.id });
     return { success: true };
   }),
 
@@ -1029,6 +1034,7 @@ const publisherRouter = router({
           engineLog: result.log.join("\n"),
         });
         await updateMaterial(task.materialId, { status: "published" });
+        await createLog({ level: "success", category: "publish", title: `发布成功：${material.title}`, message: `任务 #${input.taskId} 发布成功\n发布链接：${result.publishedUrl}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: input.taskId });
         if (result.publishedUrl) {
           // 保存收录监控记录
           await createIndexingRecord({
@@ -1086,11 +1092,13 @@ const publisherRouter = router({
           engineLog: result.log.join("\n"),
           retryCount: (task.retryCount ?? 0) + 1,
         });
+        await createLog({ level: "error", category: "publish", title: `发布失败：${material.title}`, message: `任务 #${input.taskId} 发布失败\n错误：${result.errorMessage}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: input.taskId });
         return { success: false, errorMessage: result.errorMessage, log: result.log };
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       await updatePublishTask(input.taskId, { status: "failed", completedAt: new Date(), errorMessage: msg });
+      await createLog({ level: "error", category: "publish", title: `发布异常：${material.title}`, message: `任务 #${input.taskId} 发生异常\n${msg}`, entityType: "task", entityId: input.taskId });
       throw error;
     }
   }),
@@ -1422,6 +1430,32 @@ const publishedPagesRouter = router({
     return { csv, total: pages.length };
   }),
 });
+// ─── Logs Router ─────────────────────────────────────────────────────────────────────────────
+const logsRouter = router({
+  list: protectedProcedure
+    .input(z.object({
+      category: z.string().optional(),
+      level: z.string().optional(),
+      limit: z.number().min(1).max(500).default(100),
+      offset: z.number().min(0).default(0),
+    }).optional())
+    .query(async ({ input }) => {
+      return await getLogs(input ?? {});
+    }),
+  count: protectedProcedure
+    .input(z.object({
+      category: z.string().optional(),
+      level: z.string().optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      return await getLogCount(input ?? {});
+    }),
+  clear: protectedProcedure.mutation(async () => {
+    await clearLogs();
+    return { success: true };
+  }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -1445,7 +1479,7 @@ export const appRouter = router({
   sites: sitesRouter,
   publisher: publisherRouter,
   batchGeneration: batchGenerationRouter,
-  publishedPages: publishedPagesRouter,
+   publishedPages: publishedPagesRouter,
+  logs: logsRouter,
 });
-
 export type AppRouter = typeof appRouter;

@@ -301,3 +301,25 @@ export const publishedPages = mysqlTable("published_pages", {
 });
 export type PublishedPage = typeof publishedPages.$inferSelect;
 export type InsertPublishedPage = typeof publishedPages.$inferInsert;
+
+// ─── System Logs ───────────────────────────────────────────────────────────────
+export const systemLogs = mysqlTable("system_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  // 日志级别: info | warn | error | success
+  level: varchar("level", { length: 20 }).notNull().default("info"),
+  // 操作类型: publish | generate | review | cookie | account | system
+  category: varchar("category", { length: 50 }).notNull().default("system"),
+  // 操作标题（简短描述）
+  title: varchar("title", { length: 200 }).notNull(),
+  // 详细日志内容
+  message: text("message"),
+  // 关联实体（如 taskId、materialId 等）
+  entityType: varchar("entityType", { length: 50 }),
+  entityId: int("entityId"),
+  // 操作耗时（毫秒）
+  duration: int("duration"),
+  // 创建时间
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type SystemLog = typeof systemLogs.$inferSelect;
+export type InsertSystemLog = typeof systemLogs.$inferInsert;
