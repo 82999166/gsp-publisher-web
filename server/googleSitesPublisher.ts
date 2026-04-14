@@ -2,11 +2,31 @@
  * Google Sites Publisher Engine
  * 使用 Puppeteer 模拟真人操作，通过 Cookie 登录 Google Sites 并发布文章
  */
+import fs from "fs";
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page } from "puppeteer-core";
 
-const CHROMIUM_PATH = "/usr/bin/chromium-browser";
+// 自动检测 Chromium 可执行文件路径（优先使用真实二进制，而非 shell 包装器）
+function detectChromiumPath(): string {
+  const candidates = [
+    "/usr/lib/chromium-browser/chromium-browser", // Ubuntu 真实二进制
+    "/usr/bin/chromium",                          // Debian/Ubuntu 直接安装
+    "/usr/bin/google-chrome-stable",              // Google Chrome stable
+    "/usr/bin/google-chrome",                     // Google Chrome
+    "/snap/bin/chromium",                         // Snap 包
+    "/usr/bin/chromium-browser",                  // 脚本包装器（兜底）
+  ];
+  for (const p of candidates) {
+    try {
+      const stat = fs.statSync(p);
+      if (stat.isFile() && (stat.mode & 0o111)) return p;
+    } catch {}
+  }
+  return "/usr/bin/chromium-browser"; // 最终兜底
+}
+
+const CHROMIUM_PATH = detectChromiumPath();
 
 // 注册 Stealth 插件（绕过 Google 反爬虫检测）
 puppeteerExtra.use(StealthPlugin());
