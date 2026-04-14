@@ -8,23 +8,40 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page } from "puppeteer-core";
 import type { BrowserFingerprint } from "./fingerprint.js";
 
-// 自动检测 Chromium 可执行文件路径
-// 优先级：puppeteer 内置 Chromium（~/.cache/puppeteer）> 系统安装的真实二进制 > 最终兜底
-function detectChromiumPath(): string {
-  // 1. 优先使用 puppeteer 内置 Chromium（生产环境最可靠，由 pnpm install 自动下载）
+// 异步获取 Chromium 可执行文件路径
+// 优先级：puppeteer 内置 Chromium（自动下载）> 系统安装的真实二进制
+async function getChromiumPath(): Promise<string> {
+  // 1. 尝试 puppeteer 内置 Chromium 路径
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const puppeteer = require("puppeteer");
     const builtinPath = puppeteer.executablePath();
     if (builtinPath) {
-      const stat = fs.statSync(builtinPath);
-      if (stat.isFile() && (stat.mode & 0o111)) {
-        console.log(`[Chromium] 使用 puppeteer 内置 Chromium: ${builtinPath}`);
-        return builtinPath;
+      try {
+        const stat = fs.statSync(builtinPath);
+        if (stat.isFile() && (stat.mode & 0o111)) {
+          console.log(`[Chromium] 使用 puppeteer 内置 Chromium: ${builtinPath}`);
+          return builtinPath;
+        }
+      } catch {
+        // 文件不存在，尝试自动下载
+        console.log(`[Chromium] 内置路径不存在，尝试自动下载 Chromium...`);
+        try {
+          const { downloadBrowsers } = await import("puppeteer/internal/node/install.js");
+          await downloadBrowsers();
+          // 下载后再次检查
+          const stat2 = fs.statSync(builtinPath);
+          if (stat2.isFile() && (stat2.mode & 0o111)) {
+            console.log(`[Chromium] 下载完成，使用: ${builtinPath}`);
+            return builtinPath;
+          }
+        } catch (downloadErr) {
+          console.warn(`[Chromium] 自动下载失败: ${downloadErr}`);
+        }
       }
     }
   } catch {
-    // puppeteer 未安装或路径无效，继续尝试系统路径
+    // puppeteer 未安装，继续尝试系统路径
   }
 
   // 2. 回退到系统安装的 Chromium（只接受真实 ELF 二进制 >1MB，跳过 shell 包装器）
@@ -45,12 +62,9 @@ function detectChromiumPath(): string {
     } catch {}
   }
 
-  // 3. 最终兜底
-  console.warn(`[Chromium] 未找到有效 Chromium，使用兜底路径`);
-  return "/usr/bin/chromium-browser";
+  // 3. 最终兜底（会失败，但至少有明确错误信息）
+  throw new Error(`[Chromium] 未找到有效 Chromium 可执行文件。请确保 puppeteer 已正确安装并能下载 Chromium。`);
 }
-
-const CHROMIUM_PATH = detectChromiumPath();
 
 // 注册 Stealth 插件（绕过 Google 反爬虫检测）
 puppeteerExtra.use(StealthPlugin());
@@ -190,8 +204,9 @@ export class GoogleSitesPublisher {
       args.push(`--proxy-server=${protocol}://${options.proxy.host}:${options.proxy.port}`);
     }
 
+    const chromiumPath = await getChromiumPath();
     const browser = await puppeteerExtra.launch({
-      executablePath: CHROMIUM_PATH,
+      executablePath: chromiumPath,
       headless: options.headless !== false,
       args,
       defaultViewport: { width: windowW, height: windowH },
