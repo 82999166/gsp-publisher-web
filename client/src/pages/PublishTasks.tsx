@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,11 +33,13 @@ import {
   HelpCircle,
   Loader2,
   Plus,
+  RefreshCw,
+  ScrollText,
   Trash2,
   XCircle,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type Task = {
@@ -47,6 +50,7 @@ type Task = {
   status: string;
   publishedUrl?: string | null;
   errorMessage?: string | null;
+  engineLog?: string | null;
   scheduledAt?: Date | null;
   completedAt?: Date | null;
 };
@@ -59,9 +63,17 @@ const statusLabel: Record<string, string> = {
   scheduled: "已计划",
 };
 
+const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  pending: "outline",
+  running: "default",
+  success: "default",
+  failed: "destructive",
+  scheduled: "secondary",
+};
+
 const statusClass: Record<string, string> = {
   pending: "bg-amber-50 text-amber-700 border border-amber-200",
-  running: "bg-blue-50 text-blue-700 border border-blue-200",
+  running: "bg-blue-50 text-blue-700 border border-blue-200 animate-pulse",
   success: "bg-emerald-50 text-emerald-700 border border-emerald-200",
   failed: "bg-red-50 text-red-700 border border-red-200",
   scheduled: "bg-purple-50 text-purple-700 border border-purple-200",
@@ -69,7 +81,9 @@ const statusClass: Record<string, string> = {
 
 export default function PublishTasks() {
   const utils = trpc.useUtils();
-  const { data: tasks = [], isLoading } = trpc.tasks.list.useQuery();
+  const { data: tasks = [], isLoading, refetch } = trpc.tasks.list.useQuery(undefined, {
+    refetchInterval: 3000, // 每3秒自动刷新，跟踪执行中任务
+  });
   const { data: accounts = [] } = trpc.accounts.list.useQuery();
   const { data: materials = [] } = trpc.materials.list.useQuery({ status: "approved" });
 
@@ -86,7 +100,6 @@ export default function PublishTasks() {
   const updateStatusMutation = trpc.tasks.updateStatus.useMutation({
     onSuccess: () => {
       utils.tasks.list.invalidate();
-      toast.success("任务状态已更新");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -99,8 +112,52 @@ export default function PublishTasks() {
     onError: (e) => toast.error(e.message),
   });
 
+  // executeTask mutation - 真正调用发布引擎
+  const executeTaskMutation = trpc.publisher.executeTask.useMutation({
+    onMutate: ({ taskId }: { taskId: number }) => {
+      setExecutingTaskId(taskId);
+      setLogLines([`[${new Date().toLocaleTimeString()}] 开始执行发布任务 #${taskId}...`]);
+      setLogOpen(true);
+    },
+    onSuccess: (data: any, variables: { taskId: number }) => {
+      setExecutingTaskId(null);
+      utils.tasks.list.invalidate();
+      if (data.success) {
+        setLogLines(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] ✅ 发布成功！`,
+          data.publishedUrl ? `[${new Date().toLocaleTimeString()}] 发布链接：${data.publishedUrl}` : "",
+          ...(data.log ?? []).map((l: string) => `  ${l}`),
+        ].filter(Boolean));
+        toast.success("发布成功！");
+      } else {
+        setLogLines(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] ❌ 发布失败：${(data as any).errorMessage ?? "未知错误"}`,
+          ...((data as any).log ?? []).map((l: string) => `  ${l}`),
+        ].filter(Boolean));
+        toast.error(`发布失败：${(data as any).errorMessage ?? "未知错误"}`);
+      }
+    },
+    onError: (e: any) => {
+      setExecutingTaskId(null);
+      utils.tasks.list.invalidate();
+      setLogLines(prev => [
+        ...prev,
+        `[${new Date().toLocaleTimeString()}] ❌ 执行异常：${e.message}`,
+      ]);
+      toast.error(`执行异常：${e.message}`);
+    },
+  });
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [executingTaskId, setExecutingTaskId] = useState<number | null>(null);
+  const [viewLogTask, setViewLogTask] = useState<Task | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
   const [form, setForm] = useState({
     name: "",
     accountId: "",
@@ -125,6 +182,21 @@ export default function PublishTasks() {
     });
   }
 
+  function handleExecute(task: Task) {
+    if (!task.materialId) {
+      toast.error("该任务未关联素材，无法执行发布");
+      return;
+    }
+    executeTaskMutation.mutate({ taskId: task.id });
+  }
+
+  // 自动滚动日志到底部
+  useEffect(() => {
+    if (logOpen && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logLines, logOpen]);
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -133,6 +205,13 @@ export default function PublishTasks() {
           <p className="text-sm text-muted-foreground mt-1">管理 Google Sites 自动化发布任务</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => refetch()}
+            className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="刷新"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
           <button
             onClick={() => setHelpOpen(true)}
             className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -168,7 +247,7 @@ export default function PublishTasks() {
         <div className="text-sm">
           <p className="font-medium text-amber-800">发布引擎配置提示</p>
           <p className="mt-1 text-amber-700">
-            自动发布功能需要配置代理服务器，请前往「系统设置」完成代理配置后再执行发布任务。
+            自动发布功能需要有效的 Google 账号 Cookie 和代理服务器。请确保账号 Cookie 已更新（账号管理 → 编辑 → 更新 Cookie），并在「系统设置」完成代理配置。
           </p>
         </div>
       </div>
@@ -200,8 +279,9 @@ export default function PublishTasks() {
             <TableBody>
               {(tasks as Task[]).map((task) => {
                 const account = (accounts as any[]).find((a: any) => a.id === task.accountId);
+                const isExecuting = executingTaskId === task.id;
                 return (
-                  <TableRow key={task.id}>
+                  <TableRow key={task.id} className={isExecuting ? "bg-blue-50/50" : ""}>
                     <TableCell>
                       <div className="font-medium text-foreground text-sm">{task.name}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">#{task.id}</div>
@@ -210,7 +290,8 @@ export default function PublishTasks() {
                       {account?.name ?? `#${task.accountId}`}
                     </TableCell>
                     <TableCell>
-                      <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${statusClass[task.status] ?? "bg-muted text-muted-foreground"}`}>
+                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${statusClass[task.status] ?? "bg-muted text-muted-foreground"}`}>
+                        {isExecuting && <Loader2 className="h-3 w-3 animate-spin" />}
                         {statusLabel[task.status] ?? task.status}
                       </span>
                     </TableCell>
@@ -247,26 +328,59 @@ export default function PublishTasks() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
+                        {/* 待执行：调用真实发布引擎 */}
                         {task.status === "pending" && (
                           <Button
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50"
-                            onClick={() => updateStatusMutation.mutate({ id: task.id, status: "running" })}
+                            disabled={isExecuting || executeTaskMutation.isPending}
+                            onClick={() => handleExecute(task)}
                           >
-                            <Loader2 className="h-3 w-3" />
+                            {isExecuting ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Zap className="h-3 w-3" />
+                            )}
                             执行
                           </Button>
                         )}
-                        {task.status === "running" && (
+                        {/* 失败任务：重试 */}
+                        {task.status === "failed" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 text-amber-600 hover:bg-amber-50"
+                            disabled={executeTaskMutation.isPending}
+                            onClick={() => {
+                              // 先重置为 pending，再执行
+                              updateStatusMutation.mutate({ id: task.id, status: "pending" }, {
+                                onSuccess: () => {
+                                  executeTaskMutation.mutate({ taskId: task.id });
+                                }
+                              });
+                            }}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            重试
+                          </Button>
+                        )}
+                        {/* 执行中：手动标记完成/失败 */}
+                        {task.status === "running" && !isExecuting && (
                           <>
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs gap-1 text-emerald-600 hover:bg-emerald-50"
                               onClick={() => {
-                                const url = prompt("输入发布成功的 URL：");
-                                if (url) updateStatusMutation.mutate({ id: task.id, status: "success", publishedUrl: url });
+                                const url = prompt("输入发布成功的 URL（可留空）：");
+                                updateStatusMutation.mutate({
+                                  id: task.id,
+                                  status: "success",
+                                  publishedUrl: url || undefined,
+                                }, {
+                                  onSuccess: () => toast.success("已标记为成功"),
+                                });
                               }}
                             >
                               <CheckCircle2 className="h-3 w-3" />
@@ -276,12 +390,30 @@ export default function PublishTasks() {
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs gap-1 text-red-600 hover:bg-red-50"
-                              onClick={() => updateStatusMutation.mutate({ id: task.id, status: "failed", errorMessage: "手动标记失败" })}
+                              onClick={() => updateStatusMutation.mutate({ id: task.id, status: "failed", errorMessage: "手动标记失败" }, {
+                                onSuccess: () => toast.success("已标记为失败"),
+                              })}
                             >
                               <XCircle className="h-3 w-3" />
                               失败
                             </Button>
                           </>
+                        )}
+                        {/* 查看日志 */}
+                        {(task.engineLog || task.errorMessage) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:bg-muted"
+                            onClick={() => {
+                              setViewLogTask(task);
+                              setLogLines((task.engineLog ?? task.errorMessage ?? "").split("\n").filter(Boolean));
+                              setLogOpen(true);
+                            }}
+                          >
+                            <ScrollText className="h-3 w-3" />
+                            日志
+                          </Button>
                         )}
                         <Button
                           variant="ghost"
@@ -341,7 +473,7 @@ export default function PublishTasks() {
                   <SelectValue placeholder="选择已通过审核的素材" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">不关联素材</SelectItem>
+                  <SelectItem value="none">不关联素材</SelectItem>
                   {(materials as any[]).map((m: any) => (
                     <SelectItem key={m.id} value={String(m.id)}>{m.title}</SelectItem>
                   ))}
@@ -368,6 +500,67 @@ export default function PublishTasks() {
         </DialogContent>
       </Dialog>
 
+      {/* Log Dialog */}
+      <Dialog open={logOpen} onOpenChange={(open) => {
+        if (!open && executingTaskId !== null) return; // 执行中不允许关闭
+        setLogOpen(open);
+        if (!open) setViewLogTask(null);
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ScrollText className="h-4 w-4" />
+              {executingTaskId !== null ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                  发布引擎运行日志
+                </span>
+              ) : (
+                `任务日志${viewLogTask ? ` — ${viewLogTask.name}` : ""}`
+              )}
+            </DialogTitle>
+            {executingTaskId !== null && (
+              <DialogDescription>发布引擎正在运行中，请等待完成...</DialogDescription>
+            )}
+          </DialogHeader>
+          <div className="bg-zinc-950 rounded-lg p-4 h-80 overflow-y-auto font-mono text-xs">
+            {logLines.length === 0 ? (
+              <p className="text-zinc-500">等待日志输出...</p>
+            ) : (
+              logLines.map((line, i) => (
+                <div
+                  key={i}
+                  className={`leading-5 ${
+                    line.includes("✅") || line.includes("成功")
+                      ? "text-emerald-400"
+                      : line.includes("❌") || line.includes("失败") || line.includes("错误") || line.includes("异常")
+                      ? "text-red-400"
+                      : line.includes("⚠") || line.includes("警告")
+                      ? "text-amber-400"
+                      : "text-zinc-300"
+                  }`}
+                >
+                  {line}
+                </div>
+              ))
+            )}
+            <div ref={logEndRef} />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLogOpen(false);
+                setViewLogTask(null);
+              }}
+              disabled={executingTaskId !== null}
+            >
+              {executingTaskId !== null ? "执行中..." : "关闭"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Help Dialog */}
       <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
         <DialogContent className="max-w-lg">
@@ -382,7 +575,8 @@ export default function PublishTasks() {
               <li>已配置代理服务器（系统设置 → 代理配置）</li>
               <li>关联素材已通过审核</li>
             </ul>
-            <p><strong className="text-foreground">状态说明：</strong>待执行 → 执行中 → 已成功/已失败</p>
+            <p><strong className="text-foreground">状态说明：</strong>待执行 → 执行中（Puppeteer 运行）→ 已成功/已失败</p>
+            <p><strong className="text-foreground">失败原因排查：</strong>点击「日志」按钮查看 Puppeteer 执行详情，常见原因包括 Cookie 过期、代理连接失败、Google 反爬虫拦截。</p>
           </div>
         </DialogContent>
       </Dialog>
