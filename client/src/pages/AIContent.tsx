@@ -15,8 +15,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import {
+  BarChart2,
   BookOpen,
   HelpCircle,
   Loader2,
@@ -24,7 +26,9 @@ import {
   Sparkles,
   Tags,
   Trash2,
+  TrendingUp,
   Wand2,
+  Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -34,6 +38,9 @@ type Keyword = {
   keyword: string;
   language: string;
   status: string;
+  searchVolume?: number | null;
+  difficulty?: number | null;
+  priority?: string | null;
   createdAt?: Date | null;
 };
 
@@ -43,11 +50,23 @@ const langLabel: Record<string, string> = {
   "zh-TW": "繁体中文",
 };
 
-const styleLabel: Record<string, string> = {
-  informational: "信息型",
-  commercial: "商业型",
-  navigational: "导航型",
+const priorityConfig: Record<string, { label: string; color: string }> = {
+  high: { label: "高优先", color: "bg-green-100 text-green-700 border-green-200" },
+  medium: { label: "中优先", color: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+  low: { label: "低优先", color: "bg-gray-100 text-gray-500 border-gray-200" },
 };
+
+function DifficultyBar({ value }: { value: number }) {
+  const color = value < 30 ? "bg-green-500" : value < 60 ? "bg-yellow-500" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, value)}%` }} />
+      </div>
+      <span className="text-[10px] text-muted-foreground">{Math.round(value)}</span>
+    </div>
+  );
+}
 
 function HelpTooltip() {
   const [open, setOpen] = useState(false);
@@ -66,10 +85,11 @@ function HelpTooltip() {
           </DialogHeader>
           <div className="text-sm text-muted-foreground space-y-3">
             <p><strong className="text-foreground">1. 添加关键词：</strong>在左侧输入目标关键词，支持批量添加（每行一个）。</p>
-            <p><strong className="text-foreground">2. 关键词扩展：</strong>选择关键词后点击「AI扩展」，系统自动生成相关长尾关键词。</p>
-            <p><strong className="text-foreground">3. 生成文章：</strong>选择关键词、语言和文章类型，点击「生成文章」。AI 将生成 SEO 优化的高质量内容。</p>
-            <p><strong className="text-foreground">4. 内容审核：</strong>生成的文章保存到素材库，需在素材库中审核后方可发布。</p>
-            <p><strong className="text-foreground">5. 文章类型：</strong>信息型适合科普内容，商业型适合产品推广，导航型适合品牌页面。</p>
+            <p><strong className="text-foreground">2. 竞争度分析：</strong>点击关键词旁的「分析」按钮，AI 自动评估搜索量、竞争难度和优先级，帮助优先生成高价值文章。</p>
+            <p><strong className="text-foreground">3. 关键词扩展：</strong>选择关键词后点击「AI扩展」，系统自动生成相关长尾关键词。</p>
+            <p><strong className="text-foreground">4. 生成文章：</strong>选择关键词、语言和文章类型，点击「生成文章」。AI 将生成 SEO 优化的高质量内容。</p>
+            <p><strong className="text-foreground">5. 内容审核：</strong>生成的文章保存到素材库，需在素材库中审核后方可发布。</p>
+            <p><strong className="text-foreground">6. 优先级说明：</strong>高搜索量+低竞争=高优先级，优先生成这类文章可获得最佳 SEO 效果。</p>
           </div>
         </DialogContent>
       </Dialog>
@@ -108,6 +128,31 @@ export default function AIContent() {
     onError: (e) => toast.error(e.message),
   });
 
+  const deleteMutation = trpc.content.keywords.delete.useMutation({
+    onSuccess: () => {
+      utils.content.keywords.list.invalidate();
+      toast.success("关键词已删除");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const analyzeMutation = trpc.content.keywords.analyze.useMutation({
+    onSuccess: (data) => {
+      utils.content.keywords.list.invalidate();
+      toast.success(`分析完成：搜索量 ~${data.searchVolume?.toLocaleString()}/月，难度 ${Math.round(data.difficulty ?? 0)}，${priorityConfig[data.priority ?? "medium"]?.label ?? data.priority}`);
+    },
+    onError: (e) => toast.error(`分析失败：${e.message}`),
+  });
+
+  const batchAnalyzeMutation = trpc.content.keywords.batchAnalyze.useMutation({
+    onSuccess: (data) => {
+      utils.content.keywords.list.invalidate();
+      toast.success(`批量分析完成：${data.analyzed}/${data.total} 个关键词`);
+      setSelectedIds([]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const generateMutation = trpc.content.generate.useMutation({
     onSuccess: (data) => {
       utils.materials.list.invalidate();
@@ -125,6 +170,8 @@ export default function AIContent() {
   const [genStyle, setGenStyle] = useState("informational");
   const [genMinWords, setGenMinWords] = useState(800);
   const [expandedKws, setExpandedKws] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [analyzingId, setAnalyzingId] = useState<number | null>(null);
 
   function handleAddKeyword() {
     if (!newKeyword.trim()) return;
@@ -151,13 +198,40 @@ export default function AIContent() {
     });
   }
 
+  function handleAnalyze(kw: Keyword) {
+    setAnalyzingId(kw.id);
+    analyzeMutation.mutate(
+      { id: kw.id, keyword: kw.keyword, language: kw.language as any },
+      { onSettled: () => setAnalyzingId(null) }
+    );
+  }
+
+  function handleBatchAnalyze() {
+    if (selectedIds.length === 0) { toast.error("请先选择关键词"); return; }
+    batchAnalyzeMutation.mutate({ ids: selectedIds });
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.length === (keywords as Keyword[]).length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds((keywords as Keyword[]).map(k => k.id));
+    }
+  }
+
+  const analyzedCount = (keywords as Keyword[]).filter(k => k.difficulty != null).length;
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">AI内容生成</h1>
-          <p className="text-sm text-muted-foreground mt-1">基于 Groq AI 自动生成 SEO 优化文章</p>
+          <p className="text-sm text-muted-foreground mt-1">基于 AI 自动生成 SEO 优化文章，支持关键词竞争度分析</p>
         </div>
         <div className="flex items-center gap-2">
           <HelpTooltip />
@@ -172,6 +246,11 @@ export default function AIContent() {
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Tags className="h-4 w-4 text-primary" />
                 关键词库
+                {(keywords as Keyword[]).length > 0 && (
+                  <span className="text-xs text-muted-foreground font-normal">
+                    ({(keywords as Keyword[]).length} 个，{analyzedCount} 已分析)
+                  </span>
+                )}
               </h2>
               <Button
                 variant="outline"
@@ -213,36 +292,115 @@ export default function AIContent() {
               </Button>
             </div>
 
+            {/* Batch actions */}
+            {(keywords as Keyword[]).length > 0 && (
+              <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/50">
+                <button
+                  onClick={toggleSelectAll}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {selectedIds.length === (keywords as Keyword[]).length ? "取消全选" : "全选"}
+                </button>
+                {selectedIds.length > 0 && (
+                  <>
+                    <span className="text-xs text-muted-foreground">已选 {selectedIds.length} 个</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-xs gap-1 ml-auto"
+                      onClick={handleBatchAnalyze}
+                      disabled={batchAnalyzeMutation.isPending}
+                    >
+                      {batchAnalyzeMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <BarChart2 className="h-3 w-3" />
+                      )}
+                      批量分析
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Keyword list */}
-            <div className="space-y-1 max-h-72 overflow-y-auto">
+            <div className="space-y-1 max-h-80 overflow-y-auto">
               {kwLoading ? (
                 <div className="text-xs text-muted-foreground text-center py-4">加载中...</div>
-              ) : keywords.length === 0 ? (
+              ) : (keywords as Keyword[]).length === 0 ? (
                 <div className="text-xs text-muted-foreground text-center py-6">
                   <Tags className="h-6 w-6 mx-auto mb-2 opacity-40" />
                   暂无关键词
                 </div>
               ) : (
-                keywords.map((kw: Keyword) => (
+                (keywords as Keyword[]).map((kw) => (
                   <div
                     key={kw.id}
-                    onClick={() => setSelectedKw(kw.keyword)}
-                    className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm ${
+                    className={`rounded-lg border transition-colors ${
                       selectedKw === kw.keyword
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "hover:bg-muted/50 text-foreground"
+                        ? "bg-primary/5 border-primary/30"
+                        : "bg-transparent border-transparent hover:bg-muted/40 hover:border-border/50"
                     }`}
                   >
-                    <span className="truncate flex-1">{kw.keyword}</span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-[10px] text-muted-foreground">{langLabel[kw.language] ?? kw.language}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleExpand(kw.keyword); }}
-                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                        title="AI扩展关键词"
-                      >
-                        <Wand2 className="h-3 w-3" />
-                      </button>
+                    <div
+                      className="flex items-center gap-2 px-2.5 py-2 cursor-pointer"
+                      onClick={() => setSelectedKw(kw.keyword)}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(kw.id)}
+                        onChange={e => { e.stopPropagation(); toggleSelect(kw.id); }}
+                        onClick={e => e.stopPropagation()}
+                        className="h-3.5 w-3.5 rounded border-gray-300 accent-primary shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm truncate text-foreground">{kw.keyword}</span>
+                          {kw.priority && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${priorityConfig[kw.priority]?.color ?? ""}`}>
+                              {priorityConfig[kw.priority]?.label ?? kw.priority}
+                            </span>
+                          )}
+                        </div>
+                        {kw.difficulty != null && (
+                          <div className="flex items-center gap-3 mt-0.5">
+                            <DifficultyBar value={kw.difficulty} />
+                            {kw.searchVolume != null && (
+                              <span className="text-[10px] text-muted-foreground">
+                                ~{kw.searchVolume >= 1000 ? `${(kw.searchVolume / 1000).toFixed(1)}k` : kw.searchVolume}/月
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={e => { e.stopPropagation(); handleAnalyze(kw); }}
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors"
+                          title="竞争度分析"
+                          disabled={analyzingId === kw.id}
+                        >
+                          {analyzingId === kw.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <BarChart2 className="h-3 w-3" />
+                          )}
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); handleExpand(kw.keyword); }}
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                          title="AI扩展关键词"
+                        >
+                          <Wand2 className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); deleteMutation.mutate({ id: kw.id }); }}
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
+                          title="删除"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -283,6 +441,29 @@ export default function AIContent() {
               </div>
             </div>
           )}
+
+          {/* Keyword stats */}
+          {(keywords as Keyword[]).length > 0 && analyzedCount > 0 && (
+            <div className="bg-white rounded-xl border border-border shadow-sm p-4">
+              <h3 className="text-xs font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-primary" />
+                竞争度统计
+              </h3>
+              <div className="grid grid-cols-3 gap-2">
+                {(["high", "medium", "low"] as const).map(p => {
+                  const count = (keywords as Keyword[]).filter(k => k.priority === p).length;
+                  return (
+                    <div key={p} className="text-center">
+                      <div className={`text-lg font-bold ${p === "high" ? "text-green-600" : p === "medium" ? "text-yellow-600" : "text-gray-500"}`}>
+                        {count}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{priorityConfig[p].label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Generation Config */}
@@ -292,7 +473,6 @@ export default function AIContent() {
               <Sparkles className="h-4 w-4 text-primary" />
               文章生成配置
             </h2>
-
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label>目标关键词</Label>
@@ -304,6 +484,18 @@ export default function AIContent() {
                     onChange={e => setSelectedKw(e.target.value)}
                   />
                 </div>
+                {selectedKw && (() => {
+                  const kw = (keywords as Keyword[]).find(k => k.keyword === selectedKw);
+                  if (!kw || kw.difficulty == null) return null;
+                  return (
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
+                      <span>竞争难度：</span>
+                      <DifficultyBar value={kw.difficulty} />
+                      {kw.searchVolume != null && <span>搜索量 ~{kw.searchVolume.toLocaleString()}/月</span>}
+                      {kw.priority && <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${priorityConfig[kw.priority]?.color ?? ""}`}>{priorityConfig[kw.priority]?.label}</span>}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="grid grid-cols-3 gap-4">
@@ -348,7 +540,7 @@ export default function AIContent() {
 
               <div className="bg-muted/40 rounded-lg p-4 text-xs text-muted-foreground space-y-1.5">
                 <p className="font-medium text-foreground text-sm">生成说明</p>
-                <p>• 使用 Groq llama3-70b-8192 模型生成高质量 SEO 文章</p>
+                <p>• 使用内置 AI 模型生成高质量 SEO 文章</p>
                 <p>• 关键词密度 0.5%~2%，自然融入，避免堆砌</p>
                 <p>• 生成完成后自动保存到素材库，状态为「待审核」</p>
                 <p>• 预计生成时间：10~30 秒</p>
@@ -372,6 +564,35 @@ export default function AIContent() {
                   </>
                 )}
               </Button>
+            </div>
+          </div>
+
+          {/* Competition Analysis Panel */}
+          <div className="bg-white rounded-xl border border-border shadow-sm p-5">
+            <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-blue-500" />
+              关键词竞争度分析
+            </h2>
+            <div className="text-xs text-muted-foreground space-y-2">
+              <p>竞争度分析帮助你识别哪些关键词更容易获得 Google 收录：</p>
+              <div className="grid grid-cols-3 gap-3 mt-3">
+                <div className="bg-green-50 rounded-lg p-3 border border-green-100">
+                  <div className="text-green-700 font-semibold text-sm mb-1">高优先级</div>
+                  <div className="text-green-600 text-xs">高搜索量 + 低竞争</div>
+                  <div className="text-green-600 text-xs mt-1">最佳 SEO 机会</div>
+                </div>
+                <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-100">
+                  <div className="text-yellow-700 font-semibold text-sm mb-1">中优先级</div>
+                  <div className="text-yellow-600 text-xs">中等搜索量/竞争</div>
+                  <div className="text-yellow-600 text-xs mt-1">稳健增长选择</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                  <div className="text-gray-600 font-semibold text-sm mb-1">低优先级</div>
+                  <div className="text-gray-500 text-xs">低搜索量或高竞争</div>
+                  <div className="text-gray-500 text-xs mt-1">可暂缓处理</div>
+                </div>
+              </div>
+              <p className="mt-2">点击关键词旁的 <BarChart2 className="h-3 w-3 inline" /> 图标进行单个分析，或选中多个关键词后点击「批量分析」。</p>
             </div>
           </div>
 

@@ -301,6 +301,12 @@ export async function updateKeyword(id: number, data: Partial<InsertKeyword>) {
   await db.update(keywords).set(data).where(eq(keywords.id, id));
 }
 
+export async function deleteKeyword(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(keywords).where(eq(keywords.id, id));
+}
+
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
 export async function getDashboardStats() {
   const db = await getDb();

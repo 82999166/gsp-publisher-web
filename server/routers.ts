@@ -11,7 +11,7 @@ import {
   getHyperlinks, createHyperlink, updateHyperlink, deleteHyperlink, seedPresetHyperlinks,
   getIndexingRecords, createIndexingRecord, updateIndexingRecord, deleteIndexingRecord,
   getSettings, getSettingByKey, upsertSetting, seedDefaultSettings,
-  getKeywords, createKeyword, updateKeyword,
+  getKeywords, createKeyword, updateKeyword, deleteKeyword,
   getDashboardStats,
   getSeoTemplates, getSeoTemplateById, createSeoTemplate, updateSeoTemplate, deleteSeoTemplate, seedSeoTemplates,
   getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
@@ -172,6 +172,113 @@ const contentRouter = router({
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
       return { keywords: parsed.keywords ?? [] };
     }),
+
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      await deleteKeyword(input.id);
+      return { success: true };
+    }),
+
+    // 竞争度分析：AI 评估关键词搜索量、竞争难度、优先级
+    analyze: protectedProcedure.input(z.object({
+      id: z.number(),
+      keyword: z.string(),
+      language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    })).mutation(async ({ input }) => {
+      const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
+      const langName = langMap[input.language];
+      const response = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `你是一位专业的SEO关键词竞争度分析专家。请根据关键词评估其搜索量、竞争难度和优先级。\n评估标准：\n- searchVolume：月均搜索量估算（0-100000），基于关键词热度、长尾程度、行业规模\n- difficulty：竞争难度（0-100），0=极低竞争，100=极高竞争。长尾词、细分词竞争低\n- priority：优先级（high/medium/low），综合搜索量和竞争度，高搜索量+低竞争=high\n- reason：简要分析原因（50字以内）\n语言：${langName}`,
+          },
+          {
+            role: "user",
+            content: `请分析关键词「${input.keyword}」的竞争度，返回JSON：{"searchVolume": 数字, "difficulty": 数字, "priority": "high/medium/low", "reason": "分析原因"}`,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "keyword_analysis",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                searchVolume: { type: "number" },
+                difficulty: { type: "number" },
+                priority: { type: "string", enum: ["high", "medium", "low"] },
+                reason: { type: "string" },
+              },
+              required: ["searchVolume", "difficulty", "priority", "reason"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+      const content = response.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+      // 保存分析结果到数据库
+      await updateKeyword(input.id, {
+        searchVolume: Math.round(parsed.searchVolume),
+        difficulty: Math.min(100, Math.max(0, parsed.difficulty)),
+        priority: parsed.priority as "high" | "medium" | "low",
+      });
+      return { success: true, searchVolume: parsed.searchVolume, difficulty: parsed.difficulty, priority: parsed.priority, reason: parsed.reason };
+    }),
+
+    // 批量竞争度分析
+    batchAnalyze: protectedProcedure.input(z.object({
+      ids: z.array(z.number()),
+    })).mutation(async ({ input }) => {
+      const allKeywords = await getKeywords();
+      const targets = allKeywords.filter(k => input.ids.includes(k.id));
+      let successCount = 0;
+      for (const kw of targets) {
+        try {
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `你是SEO关键词竞争度分析专家。评估关键词的搜索量、竞争难度和优先级。返回JSON格式。`,
+              },
+              {
+                role: "user",
+                content: `分析关键词「${kw.keyword}」，返回JSON：{"searchVolume": 数字, "difficulty": 数字, "priority": "high/medium/low"}`,
+              },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "kw_analysis",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    searchVolume: { type: "number" },
+                    difficulty: { type: "number" },
+                    priority: { type: "string", enum: ["high", "medium", "low"] },
+                  },
+                  required: ["searchVolume", "difficulty", "priority"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+          const content = response.choices[0]?.message?.content ?? "{}";
+          const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+          await updateKeyword(kw.id, {
+            searchVolume: Math.round(parsed.searchVolume),
+            difficulty: Math.min(100, Math.max(0, parsed.difficulty)),
+            priority: parsed.priority as "high" | "medium" | "low",
+          });
+          successCount++;
+        } catch (e) {
+          // 单个失败不影响其他
+        }
+      }
+      return { success: true, analyzed: successCount, total: targets.length };
+    }),
   }),
 
   generate: protectedProcedure.input(z.object({
@@ -327,6 +434,113 @@ const materialsRouter = router({
       await deleteMaterial(id);
     }
     return { success: true, count: input.ids.length };
+  }),
+
+  // 文章去重检测：AI 评估与已发布内容的相似度
+  checkDuplicate: protectedProcedure.input(z.object({
+    id: z.number(),
+    title: z.string(),
+    content: z.string(),
+  })).mutation(async ({ input }) => {
+    // 获取已发布和已通过的内容标题列表
+    const allMaterials = await getMaterials({ status: "approved" });
+    const published = await getMaterials({ status: "published" });
+    const compareMaterials = [...allMaterials, ...published].filter(m => m.id !== input.id);
+
+    if (compareMaterials.length === 0) {
+      await updateMaterial(input.id, { similarityScore: 0 });
+      return { success: true, similarityScore: 0, isDuplicate: false, reason: "暂无其他已发布内容，无重复风险" };
+    }
+
+    // 取最近 10 条作为参照
+    const sampleTitles = compareMaterials.slice(0, 10).map(m => `- ${m.title}`).join("\n");
+    const response = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `你是一位内容去重检测专家。请分析新文章与已有内容标题的相似度。\n评估标准：\n- similarityScore：相似度（0-1），0=完全不同，1=完全相同\n- isDuplicate：是否属于重复内容（相似度>0.7）\n- reason：简要说明（30字内）`,
+        },
+        {
+          role: "user",
+          content: `新文章标题：「${input.title}」\n\n已有内容标题列表：\n${sampleTitles}\n\n请评估相似度，返回JSON：{"similarityScore": 数字, "isDuplicate": 布尔値, "reason": "说明"}`,
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "duplicate_check",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              similarityScore: { type: "number" },
+              isDuplicate: { type: "boolean" },
+              reason: { type: "string" },
+            },
+            required: ["similarityScore", "isDuplicate", "reason"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const content = response.choices[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+    const score = Math.min(1, Math.max(0, parsed.similarityScore));
+    await updateMaterial(input.id, { similarityScore: score });
+    return { success: true, similarityScore: score, isDuplicate: parsed.isDuplicate, reason: parsed.reason };
+  }),
+
+  // 批量去重检测
+  batchCheckDuplicate: protectedProcedure.input(z.object({
+    ids: z.array(z.number()),
+  })).mutation(async ({ input }) => {
+    const allMaterials = await getMaterials();
+    const targets = allMaterials.filter(m => input.ids.includes(m.id));
+    const published = allMaterials.filter(m => m.status === "published" || m.status === "approved");
+    let checkedCount = 0;
+    let duplicateCount = 0;
+    for (const mat of targets) {
+      try {
+        const others = published.filter(m => m.id !== mat.id);
+        if (others.length === 0) {
+          await updateMaterial(mat.id, { similarityScore: 0 });
+          checkedCount++;
+          continue;
+        }
+        const sampleTitles = others.slice(0, 8).map(m => `- ${m.title}`).join("\n");
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: `内容去重检测专家。评估新文章与已有内容的相似度，返回JSON格式。` },
+            { role: "user", content: `新文章：「${mat.title}」\n已有：\n${sampleTitles}\n返回JSON：{"similarityScore": 0-1数字, "isDuplicate": 布尔値}` },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "dup_check",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  similarityScore: { type: "number" },
+                  isDuplicate: { type: "boolean" },
+                },
+                required: ["similarityScore", "isDuplicate"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+        const c = response.choices[0]?.message?.content ?? "{}";
+        const p = JSON.parse(typeof c === "string" ? c : JSON.stringify(c));
+        const score = Math.min(1, Math.max(0, p.similarityScore));
+        await updateMaterial(mat.id, { similarityScore: score });
+        if (p.isDuplicate) duplicateCount++;
+        checkedCount++;
+      } catch (e) {
+        // 单个失败不影响其他
+      }
+    }
+    return { success: true, checked: checkedCount, duplicates: duplicateCount, total: targets.length };
   }),
 });
 

@@ -13,15 +13,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
+  AlertTriangle,
   BookOpen,
   CheckCircle2,
   Eye,
   FileText,
   HelpCircle,
+  Loader2,
   Search,
+  ShieldCheck,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -36,6 +38,7 @@ type Material = {
   content: string;
   wordCount?: number | null;
   qualityScore?: number | null;
+  similarityScore?: number | null;
   status: string;
   createdAt?: Date | null;
 };
@@ -65,6 +68,31 @@ function QualityBar({ score }: { score: number }) {
   );
 }
 
+function SimilarityBadge({ score }: { score: number }) {
+  const pct = Math.round(score * 100);
+  if (pct >= 70) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-red-50 text-red-600 border-red-200">
+        <AlertTriangle className="h-2.5 w-2.5" />
+        {pct}% 疑似重复
+      </span>
+    );
+  }
+  if (pct >= 40) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-yellow-50 text-yellow-600 border-yellow-200">
+        {pct}% 相似
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-green-50 text-green-600 border-green-200">
+      <ShieldCheck className="h-2.5 w-2.5" />
+      {pct}% 原创
+    </span>
+  );
+}
+
 function HelpTooltip() {
   const [open, setOpen] = useState(false);
   return (
@@ -84,8 +112,9 @@ function HelpTooltip() {
             <p><strong className="text-foreground">1. 素材来源：</strong>AI内容生成后自动保存到素材库，状态为「待审核」。</p>
             <p><strong className="text-foreground">2. 审核流程：</strong>点击「预览」查看文章内容，确认质量后点击「通过」，或「拒绝」不合格内容。</p>
             <p><strong className="text-foreground">3. 质量评分：</strong>0-100分，80分以上为优质内容，60分以下建议重新生成。</p>
-            <p><strong className="text-foreground">4. 发布准备：</strong>只有「已通过」状态的素材才能被发布任务使用。</p>
-            <p><strong className="text-foreground">5. 批量操作：</strong>支持批量通过、批量拒绝和批量删除操作。</p>
+            <p><strong className="text-foreground">4. 去重检测：</strong>点击 <ShieldCheck className="h-3.5 w-3.5 inline" /> 图标对单篇文章进行去重检测，或选中多篇后批量检测。相似度超过 70% 的内容标记为「疑似重复」。</p>
+            <p><strong className="text-foreground">5. 发布准备：</strong>只有「已通过」状态的素材才能被发布任务使用。</p>
+            <p><strong className="text-foreground">6. 批量操作：</strong>支持批量通过、批量拒绝、批量删除和批量去重检测。</p>
           </div>
         </DialogContent>
       </Dialog>
@@ -99,6 +128,7 @@ export default function Materials() {
   const [searchKw, setSearchKw] = useState("");
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [checkingId, setCheckingId] = useState<number | null>(null);
 
   const { data: materials = [], isLoading } = trpc.materials.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
@@ -138,7 +168,29 @@ export default function Materials() {
     onError: (e) => toast.error(e.message),
   });
 
-  const filtered = materials.filter((m: Material) =>
+  const checkDuplicateMutation = trpc.materials.checkDuplicate.useMutation({
+    onSuccess: (data) => {
+      utils.materials.list.invalidate();
+      const pct = Math.round(data.similarityScore * 100);
+      if (data.isDuplicate) {
+        toast.warning(`疑似重复内容（相似度 ${pct}%）：${data.reason}`);
+      } else {
+        toast.success(`内容原创度良好（相似度 ${pct}%）：${data.reason}`);
+      }
+    },
+    onError: (e) => toast.error(`去重检测失败：${e.message}`),
+  });
+
+  const batchCheckDuplicateMutation = trpc.materials.batchCheckDuplicate.useMutation({
+    onSuccess: (data) => {
+      utils.materials.list.invalidate();
+      setSelectedIds([]);
+      toast.success(`批量去重检测完成：${data.checked}/${data.total} 篇，发现 ${data.duplicates} 篇疑似重复`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const filtered = (materials as Material[]).filter((m) =>
     !searchKw || (m.keyword ?? "").includes(searchKw) || m.title.includes(searchKw)
   );
 
@@ -152,9 +204,20 @@ export default function Materials() {
     if (selectedIds.length === filtered.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(filtered.map((m: Material) => m.id));
+      setSelectedIds(filtered.map((m) => m.id));
     }
   }
+
+  function handleCheckDuplicate(m: Material) {
+    setCheckingId(m.id);
+    checkDuplicateMutation.mutate(
+      { id: m.id, title: m.title, content: m.content },
+      { onSettled: () => setCheckingId(null) }
+    );
+  }
+
+  const duplicateCount = filtered.filter(m => (m.similarityScore ?? 0) >= 0.7).length;
+  const checkedCount = filtered.filter(m => m.similarityScore != null).length;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -162,7 +225,7 @@ export default function Materials() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">素材库管理</h1>
-          <p className="text-sm text-muted-foreground mt-1">管理 AI 生成的文章内容，审核后用于发布</p>
+          <p className="text-sm text-muted-foreground mt-1">管理 AI 生成的文章内容，支持审核和去重检测</p>
         </div>
         <div className="flex items-center gap-2">
           <HelpTooltip />
@@ -170,12 +233,13 @@ export default function Materials() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         {[
-          { label: "全部素材", value: materials.length, color: "text-foreground" },
-          { label: "待审核", value: materials.filter((m: Material) => m.status === "pending").length, color: "text-amber-600" },
-          { label: "已通过", value: materials.filter((m: Material) => m.status === "approved").length, color: "text-emerald-600" },
-          { label: "已发布", value: materials.filter((m: Material) => m.status === "published").length, color: "text-blue-600" },
+          { label: "全部素材", value: (materials as Material[]).length, color: "text-foreground" },
+          { label: "待审核", value: (materials as Material[]).filter(m => m.status === "pending").length, color: "text-amber-600" },
+          { label: "已通过", value: (materials as Material[]).filter(m => m.status === "approved").length, color: "text-emerald-600" },
+          { label: "已发布", value: (materials as Material[]).filter(m => m.status === "published").length, color: "text-blue-600" },
+          { label: "疑似重复", value: duplicateCount, color: "text-red-600" },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-xl border border-border p-4 shadow-sm">
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -215,9 +279,24 @@ export default function Materials() {
               size="sm"
               className="h-8 text-xs gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
               onClick={() => batchUpdateMutation.mutate({ ids: selectedIds, status: "approved" })}
+              disabled={batchUpdateMutation.isPending}
             >
               <CheckCircle2 className="h-3 w-3" />
               批量通过
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+              onClick={() => batchCheckDuplicateMutation.mutate({ ids: selectedIds })}
+              disabled={batchCheckDuplicateMutation.isPending}
+            >
+              {batchCheckDuplicateMutation.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-3 w-3" />
+              )}
+              批量去重检测
             </Button>
             <Button
               variant="outline"
@@ -228,6 +307,7 @@ export default function Materials() {
                   batchDeleteMutation.mutate({ ids: selectedIds });
                 }
               }}
+              disabled={batchDeleteMutation.isPending}
             >
               <Trash2 className="h-3 w-3" />
               批量删除
@@ -263,13 +343,14 @@ export default function Materials() {
                 <th>语言</th>
                 <th>字数</th>
                 <th>质量分</th>
+                <th>去重检测</th>
                 <th>状态</th>
                 <th>创建时间</th>
                 <th className="text-right">操作</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((m: Material) => (
+              {filtered.map((m) => (
                 <tr key={m.id}>
                   <td>
                     <input
@@ -280,13 +361,20 @@ export default function Materials() {
                     />
                   </td>
                   <td>
-                    <div className="font-medium text-foreground text-sm truncate max-w-[220px]">{m.title}</div>
+                    <div className="font-medium text-foreground text-sm truncate max-w-[200px]">{m.title}</div>
                   </td>
                   <td className="text-sm text-muted-foreground">{m.keyword ?? "—"}</td>
                   <td className="text-xs text-muted-foreground">{langLabel[m.language] ?? m.language}</td>
                   <td className="text-sm tabular-nums">{m.wordCount ?? "—"}</td>
                   <td className="w-28">
                     {m.qualityScore != null ? <QualityBar score={m.qualityScore} /> : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
+                  <td className="w-32">
+                    {m.similarityScore != null ? (
+                      <SimilarityBadge score={m.similarityScore} />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">未检测</span>
+                    )}
                   </td>
                   <td><span className={`badge-${m.status}`}>{statusLabel[m.status] ?? m.status}</span></td>
                   <td className="text-xs text-muted-foreground">
@@ -299,8 +387,23 @@ export default function Materials() {
                         size="sm"
                         className="h-7 w-7 p-0"
                         onClick={() => setPreviewMaterial(m)}
+                        title="预览"
                       >
                         <Eye className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                        onClick={() => handleCheckDuplicate(m)}
+                        disabled={checkingId === m.id}
+                        title="去重检测"
+                      >
+                        {checkingId === m.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                       {m.status === "pending" && (
                         <>
@@ -309,6 +412,7 @@ export default function Materials() {
                             size="sm"
                             className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
                             onClick={() => updateStatusMutation.mutate({ id: m.id, status: "approved" })}
+                            title="通过审核"
                           >
                             <CheckCircle2 className="h-3.5 w-3.5" />
                           </Button>
@@ -317,6 +421,7 @@ export default function Materials() {
                             size="sm"
                             className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                             onClick={() => updateStatusMutation.mutate({ id: m.id, status: "rejected" })}
+                            title="拒绝"
                           >
                             <XCircle className="h-3.5 w-3.5" />
                           </Button>
@@ -331,6 +436,7 @@ export default function Materials() {
                             deleteMutation.mutate({ id: m.id });
                           }
                         }}
+                        title="删除"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -350,8 +456,8 @@ export default function Materials() {
             <DialogHeader>
               <DialogTitle className="pr-8">{previewMaterial.title}</DialogTitle>
             </DialogHeader>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground border-b pb-3 mb-4">
-              <span>关键词：{previewMaterial.keyword}</span>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground border-b pb-3 mb-4 flex-wrap">
+              <span>关键词：{previewMaterial.keyword ?? "—"}</span>
               <span>·</span>
               <span>{langLabel[previewMaterial.language] ?? previewMaterial.language}</span>
               <span>·</span>
@@ -362,38 +468,60 @@ export default function Materials() {
                   <span>质量分：{previewMaterial.qualityScore}</span>
                 </>
               )}
+              {previewMaterial.similarityScore != null && (
+                <>
+                  <span>·</span>
+                  <SimilarityBadge score={previewMaterial.similarityScore} />
+                </>
+              )}
             </div>
             <div className="prose prose-sm max-w-none text-foreground">
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{previewMaterial.content}</pre>
             </div>
-            <div className="flex justify-end gap-2 mt-4 border-t pt-4">
-              {previewMaterial.status === "pending" && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-red-700 border-red-200 hover:bg-red-50"
-                    onClick={() => {
-                      updateStatusMutation.mutate({ id: previewMaterial.id, status: "rejected" });
-                      setPreviewMaterial(null);
-                    }}
-                  >
-                    <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                    拒绝
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    onClick={() => {
-                      updateStatusMutation.mutate({ id: previewMaterial.id, status: "approved" });
-                      setPreviewMaterial(null);
-                    }}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                    通过审核
-                  </Button>
-                </>
-              )}
+            <div className="flex justify-between items-center mt-4 border-t pt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
+                onClick={() => handleCheckDuplicate(previewMaterial)}
+                disabled={checkingId === previewMaterial.id}
+              >
+                {checkingId === previewMaterial.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                )}
+                去重检测
+              </Button>
+              <div className="flex gap-2">
+                {previewMaterial.status === "pending" && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-red-700 border-red-200 hover:bg-red-50"
+                      onClick={() => {
+                        updateStatusMutation.mutate({ id: previewMaterial.id, status: "rejected" });
+                        setPreviewMaterial(null);
+                      }}
+                    >
+                      <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                      拒绝
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                      onClick={() => {
+                        updateStatusMutation.mutate({ id: previewMaterial.id, status: "approved" });
+                        setPreviewMaterial(null);
+                      }}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                      通过审核
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </DialogContent>
         </Dialog>
