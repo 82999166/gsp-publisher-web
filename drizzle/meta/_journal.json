@@ -50,6 +50,13 @@
       "when": 1776181010662,
       "tag": "0006_open_beyonder",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1776274622241,
+      "tag": "0007_orange_caretaker",
+      "breakpoints": true
     }
   ]
 }

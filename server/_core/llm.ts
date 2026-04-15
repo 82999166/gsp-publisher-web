@@ -209,14 +209,65 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+// AI provider URL map
+const PROVIDER_URLS: Record<string, string> = {
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+  openai: "https://api.openai.com/v1/chat/completions",
+  deepseek: "https://api.deepseek.com/v1/chat/completions",
+  xai: "https://api.x.ai/v1/chat/completions",
+};
 
-const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+// Default models per provider
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  groq: "llama3-70b-8192",
+  openai: "gpt-4o",
+  deepseek: "deepseek-chat",
+  xai: "grok-2-1212",
+};
+
+export interface LLMConfig {
+  apiKey?: string;
+  apiUrl?: string;
+  model?: string;
+  provider?: string;
+}
+
+const resolveApiUrl = (config?: LLMConfig) => {
+  // 1. Explicit config from caller (DB settings)
+  if (config?.apiUrl && config.apiUrl.trim().length > 0) {
+    const url = config.apiUrl.trim().replace(/\/$/, "");
+    return url.endsWith("/chat/completions") ? url : `${url}/chat/completions`;
+  }
+  // 2. Provider-based URL
+  if (config?.provider && PROVIDER_URLS[config.provider]) {
+    return PROVIDER_URLS[config.provider];
+  }
+  // 3. Env variable
+  if (ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0) {
+    return `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+  }
+  // 4. Default Groq
+  return PROVIDER_URLS.groq;
+};
+
+const resolveApiKey = (config?: LLMConfig): string => {
+  if (config?.apiKey && config.apiKey.trim().length > 0) return config.apiKey.trim();
+  if (ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0) return ENV.forgeApiKey;
+  return "";
+};
+
+const resolveModel = (config?: LLMConfig): string => {
+  if (config?.model && config.model.trim().length > 0) return config.model.trim();
+  if (config?.provider && PROVIDER_DEFAULT_MODELS[config.provider]) {
+    return PROVIDER_DEFAULT_MODELS[config.provider];
+  }
+  return "llama3-70b-8192";
+};
+
+const assertApiKey = (config?: LLMConfig) => {
+  const key = resolveApiKey(config);
+  if (!key) {
+    throw new Error("AI API Key is not configured. Please set it in Settings → AI Configuration.");
   }
 };
 
@@ -265,8 +316,8 @@ const normalizeResponseFormat = ({
   };
 };
 
-export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  assertApiKey();
+export async function invokeLLM(params: InvokeParams, config?: LLMConfig): Promise<InvokeResult> {
+  assertApiKey(config);
 
   const {
     messages,
@@ -280,7 +331,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
+    model: resolveModel(config),
     messages: messages.map(normalizeMessage),
   };
 
@@ -296,9 +347,12 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
+  // Only set max_tokens for non-Groq providers (Groq has its own limits)
+  const provider = config?.provider ?? "groq";
+  if (provider !== "groq") {
+    payload.max_tokens = 32768;
+  } else {
+    payload.max_tokens = 8192;
   }
 
   const normalizedResponseFormat = normalizeResponseFormat({
@@ -312,11 +366,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetch(resolveApiUrl(), {
+  const response = await fetch(resolveApiUrl(config), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      authorization: `Bearer ${resolveApiKey(config)}`,
     },
     body: JSON.stringify(payload),
   });
