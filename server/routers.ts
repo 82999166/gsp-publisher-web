@@ -1044,6 +1044,28 @@ const publisherRouter = router({
     } catch (e: unknown) {
       diag.cache_dir_error = String(e);
     }
+    // 尝试触发 downloadBrowsers，记录结果
+    if (!diag.puppeteer_chrome_exists) {
+      try {
+        const { downloadBrowsers } = await import("puppeteer/internal/node/install.js");
+        await downloadBrowsers();
+        diag.download_result = "success";
+        // 重新检查
+        const puppeteerMod2 = await import("puppeteer");
+        const puppeteer2 = (puppeteerMod2 as any).default ?? puppeteerMod2;
+        const p2 = puppeteer2.executablePath() as string;
+        try {
+          const stat2 = (await import("fs")).statSync(p2);
+          diag.after_download_exists = true;
+          diag.after_download_size = stat2.size;
+        } catch {
+          diag.after_download_exists = false;
+        }
+      } catch (downloadErr: unknown) {
+        diag.download_result = "failed";
+        diag.download_error = String(downloadErr);
+      }
+    }
     return diag;
   }),
   verifyCookie: protectedProcedure.input(z.object({
