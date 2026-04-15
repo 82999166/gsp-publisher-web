@@ -993,7 +993,7 @@ const sitesRouter = router({
 // ─── Publisher Engine ─────────────────────────────────────────────────────────
 const publisherRouter = router({
   // 诊断端点：查询生产环境 Chromium 状态
-  chromiumDiag: protectedProcedure.query(async () => {
+  chromiumDiag: publicProcedure.query(async () => {
     const fsModule = await import("fs");
     const osModule = await import("os");
     const diag: Record<string, unknown> = {
@@ -1004,8 +1004,8 @@ const publisherRouter = router({
       env_PUPPETEER_CACHE_DIR: process.env.PUPPETEER_CACHE_DIR ?? null,
     };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const puppeteer = require("puppeteer");
+      const puppeteerMod = await import("puppeteer");
+      const puppeteer = (puppeteerMod as any).default ?? puppeteerMod;
       const p = puppeteer.executablePath() as string;
       diag.puppeteer_executablePath = p;
       try {

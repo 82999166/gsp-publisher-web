@@ -12,10 +12,12 @@ import type { BrowserFingerprint } from "./fingerprint.js";
 // 优先级：puppeteer 内置 Chromium（自动下载）> 系统安装的真实二进制
 async function getChromiumPath(): Promise<string> {
   // 1. 尝试 puppeteer 内置 Chromium 路径
+  // 使用动态 import() 而非 require()，兼容 ESM 生产环境（esbuild 编译后 require 不可用）
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const puppeteer = require("puppeteer");
-    const builtinPath = puppeteer.executablePath();
+    const puppeteerMod = await import("puppeteer");
+    // 支持 default 导出和命名导出两种形式
+    const puppeteer = (puppeteerMod as any).default ?? puppeteerMod;
+    const builtinPath: string = puppeteer.executablePath();
     if (builtinPath) {
       try {
         const stat = fs.statSync(builtinPath);
@@ -40,8 +42,9 @@ async function getChromiumPath(): Promise<string> {
         }
       }
     }
-  } catch {
-    // puppeteer 未安装，继续尝试系统路径
+  } catch (puppeteerImportErr) {
+    console.warn(`[Chromium] puppeteer import 失败: ${puppeteerImportErr}`);
+    // puppeteer 未安装或 import 失败，继续尝试系统路径
   }
 
   // 2. 回退到系统安装的 Chromium（只接受真实 ELF 二进制 >1MB，跳过 shell 包装器）
