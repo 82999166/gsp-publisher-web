@@ -3,7 +3,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { invokeLLM, type LLMConfig } from "./_core/llm";
+import { invokeLLM } from "./_core/llm";
 import {
   getAccounts, getAccountById, createAccount, updateAccount, deleteAccount,
   getMaterials, getMaterialById, createMaterial, updateMaterial, deleteMaterial,
@@ -23,20 +23,6 @@ import {
 import { googleSitesPublisher } from "./googleSitesPublisher";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
-
-// Helper: read AI config from DB settings
-async function getAiConfig(): Promise<LLMConfig> {
-  const [providerRow, keyRow, modelRow] = await Promise.all([
-    getSettingByKey("ai_engine"),
-    getSettingByKey("ai_api_key"),
-    getSettingByKey("ai_model"),
-  ]);
-  return {
-    provider: providerRow?.value ?? "groq",
-    apiKey: keyRow?.value ?? "",
-    model: modelRow?.value ?? "llama3-70b-8192",
-  };
-}
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
@@ -173,7 +159,6 @@ const contentRouter = router({
     })).mutation(async ({ input }) => {
       const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
       const langName = langMap[input.language];
-      const _aiCfg = await getAiConfig();
       const response = await invokeLLM({
         messages: [
           {
@@ -200,7 +185,7 @@ const contentRouter = router({
             },
           },
         },
-      }, _aiCfg);
+      });
       const content = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
       return { keywords: parsed.keywords ?? [] };
@@ -219,7 +204,6 @@ const contentRouter = router({
     })).mutation(async ({ input }) => {
       const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
       const langName = langMap[input.language];
-      const _aiCfg = await getAiConfig();
       const response = await invokeLLM({
         messages: [
           {
@@ -249,7 +233,7 @@ const contentRouter = router({
             },
           },
         },
-      }, _aiCfg);
+      });
       const content = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
       // 保存分析结果到数据库
@@ -270,7 +254,6 @@ const contentRouter = router({
       let successCount = 0;
       for (const kw of targets) {
         try {
-          const _aiCfg = await getAiConfig();
           const response = await invokeLLM({
             messages: [
               {
@@ -299,7 +282,7 @@ const contentRouter = router({
                 },
               },
             },
-          }, _aiCfg);
+          });
           const content = response.choices[0]?.message?.content ?? "{}";
           const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
           await updateKeyword(kw.id, {
@@ -355,7 +338,6 @@ const contentRouter = router({
 
     const titleHint = input.title ? `文章标题已指定为：「${input.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
-    const _aiCfg = await getAiConfig();
     const response = await invokeLLM({
       messages: [
         {
@@ -392,7 +374,7 @@ const contentRouter = router({
           },
         },
       },
-    }, _aiCfg);
+    });
 
     const content = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
@@ -494,7 +476,6 @@ const materialsRouter = router({
 
     // 取最近 10 条作为参照
     const sampleTitles = compareMaterials.slice(0, 10).map(m => `- ${m.title}`).join("\n");
-    const _aiCfg = await getAiConfig();
     const response = await invokeLLM({
       messages: [
         {
@@ -523,7 +504,7 @@ const materialsRouter = router({
           },
         },
       },
-    }, _aiCfg);
+    });
     const content = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
     const score = Math.min(1, Math.max(0, parsed.similarityScore));
@@ -549,7 +530,6 @@ const materialsRouter = router({
           continue;
         }
         const sampleTitles = others.slice(0, 8).map(m => `- ${m.title}`).join("\n");
-        const _aiCfg = await getAiConfig();
         const response = await invokeLLM({
           messages: [
             { role: "system", content: `内容去重检测专家。评估新文章与已有内容的相似度，返回JSON格式。` },
@@ -571,7 +551,7 @@ const materialsRouter = router({
               },
             },
           },
-        }, _aiCfg);
+        });
         const c = response.choices[0]?.message?.content ?? "{}";
         const p = JSON.parse(typeof c === "string" ? c : JSON.stringify(c));
         const score = Math.min(1, Math.max(0, p.similarityScore));
@@ -934,13 +914,12 @@ const seoTemplatesRouter = router({
     if (input.externalLinks && input.externalLinks.length > 0) {
       linkHint += `\n\n请在文章末尾的「参考资料」部分插入以下外链：\n${input.externalLinks.map(l => `- [${l.anchorText}](${l.url})`).join("\n")}`;
     }
-    const _aiCfg = await getAiConfig();
     const response = await invokeLLM({
       messages: [
         { role: "system", content: promptTemplate },
         { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
       ],
-    }, _aiCfg);
+    });
     const rawContent = response.choices?.[0]?.message?.content ?? "";
     const content = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
     const wordCount = content.replace(/\s+/g, "").length;
@@ -1275,7 +1254,6 @@ async function runBatchWorker(batchId: number) {
       }
       const titleHint = item.title ? `文章标题已指定为：「${item.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
-      const _aiCfg = await getAiConfig();
       const response = await invokeLLM({
         messages: [
           {
@@ -1305,7 +1283,7 @@ async function runBatchWorker(batchId: number) {
             },
           },
         },
-      }, _aiCfg);
+      });
 
       const rawContent = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent));
