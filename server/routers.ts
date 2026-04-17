@@ -24,6 +24,25 @@ import { googleSitesPublisher } from "./googleSitesPublisher";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
 
+// ─── AI Config Helper ─────────────────────────────────────────────────────────
+// Reads AI provider/key/model/url from DB settings, used for all invokeLLM calls
+async function getAiConfig() {
+  const rows = await getSettings();
+  const obj: Record<string, string> = {};
+  for (const r of rows) { if (r.value != null) obj[r.key] = r.value; }
+  const provider = obj["ai_engine"] ?? "groq";
+  const apiKey = obj["ai_api_key"] ?? "";
+  const model = obj["ai_model"] ?? "llama3-70b-8192";
+  // Determine base URL from provider if not explicitly set
+  let apiUrl = obj["ai_base_url"] ?? "";
+  if (!apiUrl || apiUrl === "https://api.openai.com/v1") {
+    if (provider === "groq") apiUrl = "https://api.groq.com/openai/v1";
+    else if (provider === "openai") apiUrl = "https://api.openai.com/v1";
+    else if (provider === "anthropic") apiUrl = "https://api.anthropic.com/v1";
+  }
+  return { apiKey, apiUrl, model };
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const dashboardRouter = router({
   stats: protectedProcedure.query(async () => {
@@ -159,7 +178,7 @@ const contentRouter = router({
     })).mutation(async ({ input }) => {
       const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
       const langName = langMap[input.language];
-      const response = await invokeLLM({
+      const response = await invokeLLM({ ...await getAiConfig(),
         messages: [
           {
             role: "system",
@@ -204,7 +223,7 @@ const contentRouter = router({
     })).mutation(async ({ input }) => {
       const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
       const langName = langMap[input.language];
-      const response = await invokeLLM({
+      const response = await invokeLLM({ ...await getAiConfig(),
         messages: [
           {
             role: "system",
@@ -254,7 +273,7 @@ const contentRouter = router({
       let successCount = 0;
       for (const kw of targets) {
         try {
-          const response = await invokeLLM({
+          const response = await invokeLLM({ ...await getAiConfig(),
             messages: [
               {
                 role: "system",
@@ -338,7 +357,7 @@ const contentRouter = router({
 
     const titleHint = input.title ? `文章标题已指定为：「${input.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
-    const response = await invokeLLM({
+    const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
         {
           role: "system",
@@ -476,7 +495,7 @@ const materialsRouter = router({
 
     // 取最近 10 条作为参照
     const sampleTitles = compareMaterials.slice(0, 10).map(m => `- ${m.title}`).join("\n");
-    const response = await invokeLLM({
+    const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
         {
           role: "system",
@@ -530,7 +549,7 @@ const materialsRouter = router({
           continue;
         }
         const sampleTitles = others.slice(0, 8).map(m => `- ${m.title}`).join("\n");
-        const response = await invokeLLM({
+        const response = await invokeLLM({ ...await getAiConfig(),
           messages: [
             { role: "system", content: `内容去重检测专家。评估新文章与已有内容的相似度，返回JSON格式。` },
             { role: "user", content: `新文章：「${mat.title}」\n已有：\n${sampleTitles}\n返回JSON：{"similarityScore": 0-1数字, "isDuplicate": 布尔値}` },
@@ -764,6 +783,7 @@ const settingsRouter = router({
       aiProvider: obj["ai_engine"] ?? "groq",
       groqApiKey: obj["ai_api_key"] ?? "",
       aiModel: obj["ai_model"] ?? "llama3-70b-8192",
+      aiBaseUrl: obj["ai_base_url"] ?? "",
       aiTemperature: parseFloat(obj["ai_temperature"] ?? "0.7"),
       aiMaxTokens: parseInt(obj["ai_max_tokens"] ?? "4096"),
       proxyEnabled: obj["proxy_enabled"] === "true",
@@ -809,6 +829,7 @@ const settingsRouter = router({
     gscClientEmail: z.string().optional(),
     gscPrivateKey: z.string().optional(),
     gscSiteUrl: z.string().optional(),
+    aiBaseUrl: z.string().optional(),
   })).mutation(async ({ input }) => {
     const mapping: Record<string, string | undefined> = {
       site_name: input.siteName,
@@ -818,6 +839,7 @@ const settingsRouter = router({
       ai_engine: input.aiProvider,
       ai_api_key: input.groqApiKey,
       ai_model: input.aiModel,
+      ai_base_url: input.aiBaseUrl,
       ai_temperature: input.aiTemperature?.toString(),
       ai_max_tokens: input.aiMaxTokens?.toString(),
       proxy_enabled: input.proxyEnabled?.toString(),
@@ -914,7 +936,7 @@ const seoTemplatesRouter = router({
     if (input.externalLinks && input.externalLinks.length > 0) {
       linkHint += `\n\n请在文章末尾的「参考资料」部分插入以下外链：\n${input.externalLinks.map(l => `- [${l.anchorText}](${l.url})`).join("\n")}`;
     }
-    const response = await invokeLLM({
+    const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
         { role: "system", content: promptTemplate },
         { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
@@ -1254,7 +1276,7 @@ async function runBatchWorker(batchId: number) {
       }
       const titleHint = item.title ? `文章标题已指定为：「${item.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
-      const response = await invokeLLM({
+      const response = await invokeLLM({ ...await getAiConfig(),
         messages: [
           {
             role: "system",

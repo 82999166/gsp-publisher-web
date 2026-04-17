@@ -112,3 +112,16 @@
 - [x] 每个账号绑定独立代理 IP（HTTP/HTTPS/SOCKS5），发布时自动使用
 - [x] 账号管理页面添加指纹查看/重新生成和代理配置界面
 - [x] 发布引擎集成指纹+代理，启动浏览器时自动应用
+
+## 全面检查与修复（2026-04-17）
+
+- [ ] 修复批量生成失败：AI API 调用链（从数据库读取 Groq 配置）
+- [ ] 修复 invokeLLM 硬编码 Manus BUILT_IN_FORGE_API_KEY 依赖
+- [ ] 修复 llm.ts 中硬编码的 API URL 和模型名
+- [ ] 审查并修复所有 Manus 平台专属环境变量依赖
+- [ ] 修复 OAuth 相关硬编码（OAUTH_SERVER_URL 报错）
+- [ ] 检查发布引擎 Puppeteer 在自建服务器上的可用性
+- [ ] 检查 Google Sites 发布流程完整性
+- [ ] 检查收录监控 Google 检测 API 是否可用
+- [ ] 检查所有前端硬编码 URL
+- [ ] 修复所有发现问题并重新部署

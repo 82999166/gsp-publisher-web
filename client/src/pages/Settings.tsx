@@ -208,11 +208,26 @@ export default function Settings() {
                   type="password"
                   value={form.groqApiKey}
                   onChange={e => setField("groqApiKey", e.target.value)}
-                  placeholder="gsk_..."
+                  placeholder={form.aiProvider === "groq" ? "gsk_..." : form.aiProvider === "openai" ? "sk-..." : "your-api-key"}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Groq 免费 API Key 可在 <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">console.groq.com</a> 获取
+                  {form.aiProvider === "groq" && <>Groq 免费 API Key 可在 <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">console.groq.com</a> 获取</>}
+                  {form.aiProvider === "openai" && <>OpenAI API Key 可在 <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">platform.openai.com</a> 获取</>}
+                  {form.aiProvider === "anthropic" && <>Anthropic API Key 可在 <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">console.anthropic.com</a> 获取</>}
                 </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>API Base URL <span className="text-muted-foreground text-xs font-normal">（可选，留空使用默认地址）</span></Label>
+                <Input
+                  value={(form as any).aiBaseUrl ?? ""}
+                  onChange={e => setField("aiBaseUrl", e.target.value)}
+                  placeholder={
+                    form.aiProvider === "groq" ? "https://api.groq.com/openai/v1" :
+                    form.aiProvider === "openai" ? "https://api.openai.com/v1" :
+                    "https://your-api-endpoint/v1"
+                  }
+                />
+                <p className="text-xs text-muted-foreground">如使用中转 API 或自定义端点，在此填写。留空则使用所选提供商的默认地址。</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
