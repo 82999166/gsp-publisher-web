@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { trpc } from "@/lib/trpc";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 
 export default function Login() {
@@ -12,7 +11,6 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const utils = trpc.useUtils();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,9 +32,8 @@ export default function Login() {
         setError(data.error || "登录失败");
         return;
       }
-      // 刷新用户状态
-      await utils.auth.me.invalidate();
-      window.location.href = "/";
+      // 整页跳转到首页，让服务端 session cookie 自然生效
+      window.location.replace("/");
     } catch {
       setError("网络错误，请稍后重试");
     } finally {
@@ -48,8 +45,8 @@ export default function Login() {
     <div className="flex items-center justify-center min-h-screen bg-background">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">GSP Publisher</CardTitle>
-          <CardDescription>请输入管理员账号登录</CardDescription>
+          <CardTitle className="text-2xl font-bold">如来佛谷歌协作发布系统</CardTitle>
+          <CardDescription>请输入账号密码登录</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">

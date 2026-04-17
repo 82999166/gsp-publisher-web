@@ -104,7 +104,7 @@ export default function AppSidebar() {
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-sidebar-foreground truncate leading-none">
-                  GSP Publisher
+                  如来佛谷歌协作发布系统
                 </p>
                 <p className="text-[10px] text-sidebar-foreground/50 mt-0.5 truncate">
                   Google Sites 发布系统

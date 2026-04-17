@@ -135,7 +135,7 @@ export default function Settings() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>站点名称</Label>
-                  <Input value={form.siteName} onChange={e => setField("siteName", e.target.value)} placeholder="GSP Publisher" />
+                  <Input value={form.siteName} onChange={e => setField("siteName", e.target.value)} placeholder="如来佛谷歌协作发布系统" />
                 </div>
                 <div className="space-y-1.5">
                   <Label>默认语言</Label>

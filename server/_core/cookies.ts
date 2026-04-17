@@ -39,10 +39,13 @@ export function getSessionCookieOptions(
   //       ? hostname
   //       : undefined;
 
+  // Use "lax" so cookie works correctly behind Cloudflare proxy.
+  // "none" requires secure:true strictly, but Cloudflare may not always
+  // forward the correct X-Forwarded-Proto header in all edge cases.
   return {
     httpOnly: true,
     path: "/",
-    sameSite: "none",
+    sameSite: "lax",
     secure: isSecureRequest(req),
   };
 }

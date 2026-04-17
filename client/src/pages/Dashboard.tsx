@@ -138,7 +138,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">仪表盘总览</h1>
-          <p className="text-sm text-muted-foreground mt-1">Google Sites 自动发布系统运行状态</p>
+          <p className="text-sm text-muted-foreground mt-1">谷歌协作发布系统运行状态</p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
           <span className="h-2 w-2 rounded-full bg-emerald-500 pulse-dot" />

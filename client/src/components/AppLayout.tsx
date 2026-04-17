@@ -50,7 +50,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex border-b h-14 items-center gap-3 bg-background/95 px-4 backdrop-blur sticky top-0 z-40">
             <SidebarTrigger className="h-8 w-8 rounded-lg" />
             <span className="text-sm font-semibold text-foreground">
-              {pageLabels[location] ?? "GSP Publisher"}
+              {pageLabels[location] ?? "如来佛谷歌协作发布系统"}
             </span>
           </div>
         )}
