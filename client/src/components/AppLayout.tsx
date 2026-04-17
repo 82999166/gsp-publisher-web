@@ -1,13 +1,10 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Globe } from "lucide-react";
-import { CSSProperties, useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import AppSidebar from "./AppSidebar";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
-import { Button } from "./ui/button";
 
 const SIDEBAR_WIDTH_KEY = "gsp-sidebar-width";
 const DEFAULT_WIDTH = 240;
@@ -32,40 +29,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
 
-  if (loading) {
+  // Redirect to /login if not authenticated
+  useEffect(() => {
+    if (!loading && !user) {
+      window.location.replace("/login");
+    }
+  }, [loading, user]);
+
+  if (loading || !user) {
     return <DashboardLayoutSkeleton />;
-  }
-
-  if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950">
-        <div className="flex flex-col items-center gap-8 p-10 max-w-sm w-full">
-          {/* Logo */}
-          <div className="flex flex-col items-center gap-4">
-            <div className="h-16 w-16 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shadow-lg shadow-indigo-500/10">
-              <Globe className="h-8 w-8 text-indigo-400" />
-            </div>
-            <div className="text-center">
-              <h1 className="text-2xl font-bold text-white tracking-tight">GSP Publisher</h1>
-              <p className="text-sm text-slate-400 mt-1">Google Sites 自动发布系统</p>
-            </div>
-          </div>
-
-          <div className="w-full space-y-3">
-            <p className="text-sm text-slate-400 text-center">
-              请登录以访问管理后台
-            </p>
-            <Button
-              onClick={() => { window.location.href = getLoginUrl(); }}
-              size="lg"
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/25 transition-all"
-            >
-              登录
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
   }
 
   return (
