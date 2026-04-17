@@ -265,9 +265,9 @@ export async function seedDefaultSettings() {
   if (!db) return;
   const defaults = [
     { key: "ai_api_key", value: "", description: "AI API Key（支持 OpenAI / Groq 等兼容接口）" },
-    { key: "ai_base_url", value: "https://api.openai.com/v1", description: "AI API Base URL" },
-    { key: "ai_model", value: "gpt-4.1-mini", description: "默认 AI 模型" },
-    { key: "ai_engine", value: "openai", description: "AI 引擎选择: openai / groq / gemini" },
+    { key: "ai_base_url", value: "https://api.groq.com/openai/v1", description: "AI API Base URL" },
+    { key: "ai_model", value: "llama-3.3-70b-versatile", description: "默认 AI 模型" },
+    { key: "ai_engine", value: "groq", description: "AI 引擎选择: openai / groq / gemini" },
     { key: "default_daily_limit", value: "5", description: "默认每日发布上限" },
     { key: "content_min_words", value: "800", description: "内容最少字数" },
     { key: "quality_threshold", value: "70", description: "内容质量评分门槛（0-100）" },

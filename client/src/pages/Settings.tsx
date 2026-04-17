@@ -51,7 +51,7 @@ export default function Settings() {
     // ai
     aiProvider: "groq",
     groqApiKey: "",
-    aiModel: "llama3-70b-8192",
+    aiModel: "llama-3.3-70b-versatile",
     aiTemperature: 0.7,
     aiMaxTokens: 4096,
     // proxy
@@ -193,11 +193,12 @@ export default function Settings() {
                   <Select value={form.aiModel} onValueChange={v => setField("aiModel", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="llama3-70b-8192">llama3-70b-8192</SelectItem>
-                      <SelectItem value="llama3-8b-8192">llama3-8b-8192 (快速)</SelectItem>
-                      <SelectItem value="mixtral-8x7b-32768">mixtral-8x7b-32768</SelectItem>
-                      <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                      <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
+                      <SelectItem value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (推荐)</SelectItem>
+                      <SelectItem value="llama-3.1-8b-instant">Llama 3.1 8B Instant (快速)</SelectItem>
+                      <SelectItem value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B (预览)</SelectItem>
+                      <SelectItem value="qwen/qwen3-32b">Qwen3 32B (预览)</SelectItem>
+                      <SelectItem value="gpt-4o">GPT-4o (OpenAI)</SelectItem>
+                      <SelectItem value="gpt-4o-mini">GPT-4o Mini (OpenAI)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

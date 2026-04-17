@@ -32,13 +32,17 @@ async function getAiConfig() {
   for (const r of rows) { if (r.value != null) obj[r.key] = r.value; }
   const provider = obj["ai_engine"] ?? "groq";
   const apiKey = obj["ai_api_key"] ?? "";
-  const model = obj["ai_model"] ?? "llama3-70b-8192";
+  if (!apiKey) {
+    throw new Error("请先在「系统设置 > AI 配置」中填写 API Key！Groq 免费 Key 可在 https://console.groq.com 获取");
+  }
+  const model = obj["ai_model"] ?? "llama-3.3-70b-versatile";
   // Determine base URL from provider if not explicitly set
   let apiUrl = obj["ai_base_url"] ?? "";
-  if (!apiUrl || apiUrl === "https://api.openai.com/v1") {
+  if (!apiUrl) {
     if (provider === "groq") apiUrl = "https://api.groq.com/openai/v1";
     else if (provider === "openai") apiUrl = "https://api.openai.com/v1";
     else if (provider === "anthropic") apiUrl = "https://api.anthropic.com/v1";
+    else apiUrl = "https://api.groq.com/openai/v1";
   }
   return { apiKey, apiUrl, model };
 }
@@ -191,21 +195,7 @@ const contentRouter = router({
             content: `核心关键词：${input.keyword}\n请生成${input.count}个相关长尾关键词，返回JSON格式：{"keywords": ["关键词1", "关键词2", ...]}`,
           },
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "keywords_result",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                keywords: { type: "array", items: { type: "string" } },
-              },
-              required: ["keywords"],
-              additionalProperties: false,
-            },
-          },
-        },
+        response_format: { type: "json_object" },
       });
       const content = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
@@ -236,24 +226,7 @@ const contentRouter = router({
             content: `请分析关键词「${input.keyword}」的竞争度，返回JSON：{"searchVolume": 数字, "difficulty": 数字, "priority": "high/medium/low", "reason": "分析原因"}`,
           },
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "keyword_analysis",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                searchVolume: { type: "number" },
-                difficulty: { type: "number" },
-                priority: { type: "string", enum: ["high", "medium", "low"] },
-                reason: { type: "string" },
-              },
-              required: ["searchVolume", "difficulty", "priority", "reason"],
-              additionalProperties: false,
-            },
-          },
-        },
+        response_format: { type: "json_object" },
       });
       const content = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
@@ -286,23 +259,7 @@ const contentRouter = router({
                 content: `分析关键词「${kw.keyword}」，返回JSON：{"searchVolume": 数字, "difficulty": 数字, "priority": "high/medium/low"}`,
               },
             ],
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "kw_analysis",
-                strict: true,
-                schema: {
-                  type: "object",
-                  properties: {
-                    searchVolume: { type: "number" },
-                    difficulty: { type: "number" },
-                    priority: { type: "string", enum: ["high", "medium", "low"] },
-                  },
-                  required: ["searchVolume", "difficulty", "priority"],
-                  additionalProperties: false,
-                },
-              },
-            },
+            response_format: { type: "json_object" },
           });
           const content = response.choices[0]?.message?.content ?? "{}";
           const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
@@ -377,24 +334,7 @@ const contentRouter = router({
           content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回JSON格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
         },
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "article_result",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              title: { type: "string" },
-              content: { type: "string" },
-              wordCount: { type: "number" },
-              qualityScore: { type: "number" },
-            },
-            required: ["title", "content", "wordCount", "qualityScore"],
-            additionalProperties: false,
-          },
-        },
-      },
+      response_format: { type: "json_object" },
     });
 
     const content = response.choices[0]?.message?.content ?? "{}";
@@ -508,23 +448,7 @@ const materialsRouter = router({
           content: `新文章标题：「${input.title}」\n\n已有内容标题列表：\n${sampleTitles}\n\n请评估相似度，返回JSON：{"similarityScore": 数字, "isDuplicate": 布尔値, "reason": "说明"}`,
         },
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "duplicate_check",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              similarityScore: { type: "number" },
-              isDuplicate: { type: "boolean" },
-              reason: { type: "string" },
-            },
-            required: ["similarityScore", "isDuplicate", "reason"],
-            additionalProperties: false,
-          },
-        },
-      },
+      response_format: { type: "json_object" },
     });
     const content = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
@@ -556,22 +480,7 @@ const materialsRouter = router({
             { role: "system", content: `内容去重检测专家。评估新文章与已有内容的相似度，返回JSON格式。` },
             { role: "user", content: `新文章：「${mat.title}」\n已有：\n${sampleTitles}\n返回JSON：{"similarityScore": 0-1数字, "isDuplicate": 布尔値}` },
           ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "dup_check",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  similarityScore: { type: "number" },
-                  isDuplicate: { type: "boolean" },
-                },
-                required: ["similarityScore", "isDuplicate"],
-                additionalProperties: false,
-              },
-            },
-          },
+          response_format: { type: "json_object" },
         });
         const c = response.choices[0]?.message?.content ?? "{}";
         const p = JSON.parse(typeof c === "string" ? c : JSON.stringify(c));
@@ -1297,24 +1206,7 @@ async function runBatchWorker(batchId: number) {
             content: `${titleHint}请为关键词「${item.keyword}」创作高质量SEO文章。返回JSON：{"title": "标题", "content": "正文(Markdown)", "wordCount": 字数, "qualityScore": 质量分(0-100)}`,
           },
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "article_result",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                content: { type: "string" },
-                wordCount: { type: "number" },
-                qualityScore: { type: "number" },
-              },
-              required: ["title", "content", "wordCount", "qualityScore"],
-              additionalProperties: false,
-            },
-          },
-        },
+        response_format: { type: "json_object" },
       });
 
       const rawContent = response.choices[0]?.message?.content ?? "{}";
