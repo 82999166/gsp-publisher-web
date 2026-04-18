@@ -132,3 +132,11 @@
 - [x] 前端改为轮询任务状态 + 实时显示 engineLog
 - [x] 优化 Puppeteer 发布速度（减少随机延迟、并行操作）
 - [x] 增加发布超时保护（120s 后自动标记失败）
+
+## 发布 URL 修复（2026-04-19）
+
+- [x] 分析 HAR 文件，确认 Google Sites 发布 API 流程（sitename/check → sitename/create → publish/setpublishingsettings → publish/publish）
+- [x] 修复发布 URL 返回 /new 问题：改用网络请求拦截（page.on('response')）捕获 sitename/create 响应中的真实 slug
+- [x] 三级回退机制：① 网络拦截获取真实 slug → ② 使用填入的 slug → ③ 从页面 meta 获取
+- [x] 改进发布弹窗选择器（标题、正文、发布按钮、确认按钮）
+- [x] 部署到服务器 72.167.134.119（PM2 gsp-publisher 重启成功）
