@@ -146,6 +146,12 @@ export async function getPublishTasks() {
   return db.select().from(publishTasks).orderBy(desc(publishTasks.createdAt));
 }
 
+export async function getPublishTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(publishTasks).where(eq(publishTasks.id, id)).limit(1);
+  return rows[0] ?? null;
+}
 export async function createPublishTask(data: InsertPublishTask) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");

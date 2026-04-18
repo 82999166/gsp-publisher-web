@@ -226,7 +226,7 @@ export class GoogleSitesPublisher {
 
     // 先导航到 Google 域名，再设置 Cookie
     await page.goto("https://accounts.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await randomDelay(500, 1000);
+    await randomDelay(200, 400);
 
     for (const cookie of cookies) {
       try {
@@ -246,8 +246,8 @@ export class GoogleSitesPublisher {
     }
 
     // 验证登录状态
-    await page.goto("https://myaccount.google.com", { waitUntil: "networkidle2", timeout: 30000 });
-    await randomDelay(1000, 2000);
+    await page.goto("https://myaccount.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await randomDelay(500, 800);
 
     const url = page.url();
     const isLoggedIn = !url.includes("accounts.google.com/signin") && !url.includes("accounts.google.com/v3");
@@ -266,15 +266,15 @@ export class GoogleSitesPublisher {
     if (options.siteUrl) {
       // 已有 Site，直接导航
       this.addLog(`导航到已有 Site: ${options.siteUrl}`);
-      await page.goto(options.siteUrl, { waitUntil: "networkidle2", timeout: 30000 });
-      await randomDelay(1000, 2000);
+      await page.goto(options.siteUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await randomDelay(500, 800);
       return options.siteUrl;
     }
 
     // 创建新 Site
     this.addLog("导航到 Google Sites 首页...");
-    await page.goto("https://sites.google.com/new", { waitUntil: "networkidle2", timeout: 30000 });
-    await randomDelay(2000, 3000);
+    await page.goto("https://sites.google.com/new", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await randomDelay(800, 1200);
 
     // 等待编辑器加载
     try {
@@ -321,7 +321,7 @@ export class GoogleSitesPublisher {
       this.addLog("未找到新建页面按钮，尝试通过 URL 创建...");
     }
 
-    await randomDelay(1500, 2500);
+    await randomDelay(600, 1000);
 
     // 填入页面标题
     const titleSelectors = [
@@ -335,7 +335,7 @@ export class GoogleSitesPublisher {
       try {
         await page.waitForSelector(selector, { timeout: 5000 });
         await page.click(selector);
-        await randomDelay(300, 600);
+        await randomDelay(100, 200);
         await page.keyboard.down('Control');
         await page.keyboard.press('a');
         await page.keyboard.up('Control');
@@ -347,7 +347,7 @@ export class GoogleSitesPublisher {
       }
     }
 
-    await randomDelay(500, 1000);
+    await randomDelay(200, 400);
 
     // 填入正文内容（逐段落插入）
     const bodySelectors = [
@@ -366,7 +366,7 @@ export class GoogleSitesPublisher {
           if (section.type === "h1") continue; // 标题已单独设置
           await page.keyboard.type(section.text, { delay: 20 });
           await page.keyboard.press("Enter");
-          await randomDelay(100, 300);
+          await randomDelay(20, 50);
         }
 
         this.addLog(`正文内容已填入，共 ${sections.length} 段`);
@@ -376,7 +376,7 @@ export class GoogleSitesPublisher {
       }
     }
 
-    await randomDelay(1000, 2000);
+    await randomDelay(400, 700);
 
     // 点击发布按钮
     const publishSelectors = [
@@ -397,7 +397,7 @@ export class GoogleSitesPublisher {
       }
     }
 
-    await randomDelay(2000, 4000);
+    await randomDelay(800, 1500);
 
     // 获取发布后的 URL
     const publishedUrl = page.url();

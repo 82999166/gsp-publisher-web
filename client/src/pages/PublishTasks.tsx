@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,7 +38,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type Task = {
@@ -63,14 +62,6 @@ const statusLabel: Record<string, string> = {
   scheduled: "已计划",
 };
 
-const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  pending: "outline",
-  running: "default",
-  success: "default",
-  failed: "destructive",
-  scheduled: "secondary",
-};
-
 const statusClass: Record<string, string> = {
   pending: "bg-amber-50 text-amber-700 border border-amber-200",
   running: "bg-blue-50 text-blue-700 border border-blue-200 animate-pulse",
@@ -82,10 +73,14 @@ const statusClass: Record<string, string> = {
 export default function PublishTasks() {
   const utils = trpc.useUtils();
   const { data: tasks = [], isLoading, refetch } = trpc.tasks.list.useQuery(undefined, {
-    refetchInterval: 3000, // 每3秒自动刷新，跟踪执行中任务
+    refetchInterval: 4000, // 每4秒自动刷新
   });
   const { data: accounts = [] } = trpc.accounts.list.useQuery();
   const { data: materials = [] } = trpc.materials.list.useQuery({ status: "approved" });
+
+  // 当前正在轮询的任务 ID
+  const [pollingTaskId, setPollingTaskId] = useState<number | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const createMutation = trpc.tasks.create.useMutation({
     onSuccess: () => {
@@ -98,9 +93,7 @@ export default function PublishTasks() {
   });
 
   const updateStatusMutation = trpc.tasks.updateStatus.useMutation({
-    onSuccess: () => {
-      utils.tasks.list.invalidate();
-    },
+    onSuccess: () => { utils.tasks.list.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -112,49 +105,77 @@ export default function PublishTasks() {
     onError: (e) => toast.error(e.message),
   });
 
-  // executeTask mutation - 真正调用发布引擎
+  // 查询任务状态（轮询用）
+  const taskStatusQuery = trpc.publisher.getTaskStatus.useQuery(
+    { taskId: pollingTaskId ?? 0 },
+    {
+      enabled: pollingTaskId !== null,
+      refetchInterval: pollingTaskId !== null ? 2000 : false,
+    }
+  );
+
+  // executeTask mutation - 异步触发，立即返回
   const executeTaskMutation = trpc.publisher.executeTask.useMutation({
     onMutate: ({ taskId }: { taskId: number }) => {
-      setExecutingTaskId(taskId);
+      setPollingTaskId(taskId);
       setLogLines([`[${new Date().toLocaleTimeString()}] 开始执行发布任务 #${taskId}...`]);
       setLogOpen(true);
     },
-    onSuccess: (data: any, variables: { taskId: number }) => {
-      setExecutingTaskId(null);
+    onSuccess: (_data: any, variables: { taskId: number }) => {
+      // 任务已加入队列，开始轮询
+      toast.info("发布任务已启动，正在后台执行...");
       utils.tasks.list.invalidate();
-      if (data.success) {
-        setLogLines(prev => [
-          ...prev,
-          `[${new Date().toLocaleTimeString()}] ✅ 发布成功！`,
-          data.publishedUrl ? `[${new Date().toLocaleTimeString()}] 发布链接：${data.publishedUrl}` : "",
-          ...(data.log ?? []).map((l: string) => `  ${l}`),
-        ].filter(Boolean));
-        toast.success("发布成功！");
-      } else {
-        setLogLines(prev => [
-          ...prev,
-          `[${new Date().toLocaleTimeString()}] ❌ 发布失败：${(data as any).errorMessage ?? "未知错误"}`,
-          ...((data as any).log ?? []).map((l: string) => `  ${l}`),
-        ].filter(Boolean));
-        toast.error(`发布失败：${(data as any).errorMessage ?? "未知错误"}`);
-      }
     },
     onError: (e: any) => {
-      setExecutingTaskId(null);
+      setPollingTaskId(null);
       utils.tasks.list.invalidate();
       setLogLines(prev => [
         ...prev,
-        `[${new Date().toLocaleTimeString()}] ❌ 执行异常：${e.message}`,
+        `[${new Date().toLocaleTimeString()}] ❌ 启动失败：${e.message}`,
       ]);
-      toast.error(`执行异常：${e.message}`);
+      toast.error(`启动失败：${e.message}`);
     },
   });
+
+  // 监听轮询结果，更新日志显示
+  useEffect(() => {
+    if (!pollingTaskId || !taskStatusQuery.data) return;
+    const data = taskStatusQuery.data;
+    const logText = data.engineLog ?? "";
+    const lines = logText.split("\n").filter(Boolean);
+    if (lines.length > 0) {
+      setLogLines(lines);
+    }
+    // 任务完成时停止轮询
+    if (data.status === "success" || data.status === "failed") {
+      setPollingTaskId(null);
+      utils.tasks.list.invalidate();
+      if (data.status === "success") {
+        toast.success("发布成功！");
+        setLogLines(prev => {
+          const last = prev[prev.length - 1] ?? "";
+          if (!last.includes("✅")) {
+            return [...prev, `[${new Date().toLocaleTimeString()}] ✅ 发布成功！${data.publishedUrl ? " 链接：" + data.publishedUrl : ""}`];
+          }
+          return prev;
+        });
+      } else {
+        toast.error(`发布失败：${data.errorMessage ?? "未知错误"}`);
+        setLogLines(prev => {
+          const last = prev[prev.length - 1] ?? "";
+          if (!last.includes("❌")) {
+            return [...prev, `[${new Date().toLocaleTimeString()}] ❌ 发布失败：${data.errorMessage ?? "未知错误"}`];
+          }
+          return prev;
+        });
+      }
+    }
+  }, [taskStatusQuery.data, pollingTaskId]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
-  const [executingTaskId, setExecutingTaskId] = useState<number | null>(null);
   const [viewLogTask, setViewLogTask] = useState<Task | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -177,7 +198,7 @@ export default function PublishTasks() {
     createMutation.mutate({
       name: form.name.trim(),
       accountId: parseInt(form.accountId),
-      materialId: form.materialId ? parseInt(form.materialId) : undefined,
+      materialId: form.materialId && form.materialId !== "none" ? parseInt(form.materialId) : undefined,
       scheduledAt: form.scheduledAt || undefined,
     });
   }
@@ -196,6 +217,8 @@ export default function PublishTasks() {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logLines, logOpen]);
+
+  const isExecuting = pollingTaskId !== null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -279,9 +302,9 @@ export default function PublishTasks() {
             <TableBody>
               {(tasks as Task[]).map((task) => {
                 const account = (accounts as any[]).find((a: any) => a.id === task.accountId);
-                const isExecuting = executingTaskId === task.id;
+                const isThisExecuting = pollingTaskId === task.id;
                 return (
-                  <TableRow key={task.id} className={isExecuting ? "bg-blue-50/50" : ""}>
+                  <TableRow key={task.id} className={isThisExecuting ? "bg-blue-50/50" : ""}>
                     <TableCell>
                       <div className="font-medium text-foreground text-sm">{task.name}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">#{task.id}</div>
@@ -291,7 +314,7 @@ export default function PublishTasks() {
                     </TableCell>
                     <TableCell>
                       <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${statusClass[task.status] ?? "bg-muted text-muted-foreground"}`}>
-                        {isExecuting && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {(isThisExecuting || task.status === "running") && <Loader2 className="h-3 w-3 animate-spin" />}
                         {statusLabel[task.status] ?? task.status}
                       </span>
                     </TableCell>
@@ -337,7 +360,7 @@ export default function PublishTasks() {
                             disabled={isExecuting || executeTaskMutation.isPending}
                             onClick={() => handleExecute(task)}
                           >
-                            {isExecuting ? (
+                            {isThisExecuting ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
                               <Zap className="h-3 w-3" />
@@ -351,9 +374,8 @@ export default function PublishTasks() {
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs gap-1 text-amber-600 hover:bg-amber-50"
-                            disabled={executeTaskMutation.isPending}
+                            disabled={isExecuting}
                             onClick={() => {
-                              // 先重置为 pending，再执行
                               updateStatusMutation.mutate({ id: task.id, status: "pending" }, {
                                 onSuccess: () => {
                                   executeTaskMutation.mutate({ taskId: task.id });
@@ -365,42 +387,25 @@ export default function PublishTasks() {
                             重试
                           </Button>
                         )}
-                        {/* 执行中：手动标记完成/失败 */}
-                        {task.status === "running" && !isExecuting && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs gap-1 text-emerald-600 hover:bg-emerald-50"
-                              onClick={() => {
-                                const url = prompt("输入发布成功的 URL（可留空）：");
-                                updateStatusMutation.mutate({
-                                  id: task.id,
-                                  status: "success",
-                                  publishedUrl: url || undefined,
-                                }, {
-                                  onSuccess: () => toast.success("已标记为成功"),
-                                });
-                              }}
-                            >
-                              <CheckCircle2 className="h-3 w-3" />
-                              完成
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs gap-1 text-red-600 hover:bg-red-50"
-                              onClick={() => updateStatusMutation.mutate({ id: task.id, status: "failed", errorMessage: "手动标记失败" }, {
-                                onSuccess: () => toast.success("已标记为失败"),
-                              })}
-                            >
-                              <XCircle className="h-3 w-3" />
-                              失败
-                            </Button>
-                          </>
+                        {/* 执行中：查看实时日志 */}
+                        {task.status === "running" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50"
+                            onClick={() => {
+                              setPollingTaskId(task.id);
+                              const lines = (task.engineLog ?? "").split("\n").filter(Boolean);
+                              setLogLines(lines.length > 0 ? lines : [`[${new Date().toLocaleTimeString()}] 任务 #${task.id} 正在执行中...`]);
+                              setLogOpen(true);
+                            }}
+                          >
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            查看进度
+                          </Button>
                         )}
                         {/* 查看日志 */}
-                        {(task.engineLog || task.errorMessage) && (
+                        {(task.engineLog || task.errorMessage) && task.status !== "running" && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -502,7 +507,9 @@ export default function PublishTasks() {
 
       {/* Log Dialog */}
       <Dialog open={logOpen} onOpenChange={(open) => {
-        if (!open && executingTaskId !== null) return; // 执行中不允许关闭
+        if (!open && isExecuting) {
+          // 执行中允许关闭对话框，但继续后台轮询
+        }
         setLogOpen(open);
         if (!open) setViewLogTask(null);
       }}>
@@ -510,17 +517,17 @@ export default function PublishTasks() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ScrollText className="h-4 w-4" />
-              {executingTaskId !== null ? (
+              {isExecuting ? (
                 <span className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                  发布引擎运行日志
+                  发布引擎运行日志（实时更新）
                 </span>
               ) : (
                 `任务日志${viewLogTask ? ` — ${viewLogTask.name}` : ""}`
               )}
             </DialogTitle>
-            {executingTaskId !== null && (
-              <DialogDescription>发布引擎正在运行中，请等待完成...</DialogDescription>
+            {isExecuting && (
+              <DialogDescription>发布引擎正在后台运行，每2秒自动刷新日志...</DialogDescription>
             )}
           </DialogHeader>
           <div className="bg-zinc-950 rounded-lg p-4 h-80 overflow-y-auto font-mono text-xs">
@@ -553,9 +560,8 @@ export default function PublishTasks() {
                 setLogOpen(false);
                 setViewLogTask(null);
               }}
-              disabled={executingTaskId !== null}
             >
-              {executingTaskId !== null ? "执行中..." : "关闭"}
+              {isExecuting ? "后台继续执行，关闭日志" : "关闭"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -568,14 +574,14 @@ export default function PublishTasks() {
             <DialogTitle>发布任务说明</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 text-sm text-muted-foreground">
-            <p><strong className="text-foreground">发布流程：</strong>创建任务 → 点击「执行」→ 系统自动登录 Google 账号 → 在 Google Sites 创建页面 → 发布成功后保存链接。</p>
+            <p><strong className="text-foreground">发布流程：</strong>创建任务 → 点击「执行」→ 系统立即返回（后台启动 Puppeteer）→ 实时日志每2秒自动刷新 → 发布成功后保存链接。</p>
             <p><strong className="text-foreground">前提条件：</strong></p>
             <ul className="list-disc list-inside space-y-1 ml-2">
               <li>账号 Cookie 有效（在账号管理中验证）</li>
               <li>已配置代理服务器（系统设置 → 代理配置）</li>
               <li>关联素材已通过审核</li>
             </ul>
-            <p><strong className="text-foreground">状态说明：</strong>待执行 → 执行中（Puppeteer 运行）→ 已成功/已失败</p>
+            <p><strong className="text-foreground">状态说明：</strong>待执行 → 执行中（Puppeteer 后台运行，约30-90秒）→ 已成功/已失败</p>
             <p><strong className="text-foreground">失败原因排查：</strong>点击「日志」按钮查看 Puppeteer 执行详情，常见原因包括 Cookie 过期、代理连接失败、Google 反爬虫拦截。</p>
           </div>
         </DialogContent>

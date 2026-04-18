@@ -19,6 +19,7 @@ import {
   getGenerationItemsByBatch, createGenerationItems, updateGenerationItem, getPendingGenerationItems, countGenerationItems,
   getPublishedPages, countPublishedPages, createPublishedPage, updatePublishedPage, deletePublishedPage, getPublishedPageStats,
   createLog, getLogs, getLogCount, clearLogs,
+  getPublishTaskById,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
 import { generateFingerprint } from "./fingerprint";
@@ -932,6 +933,106 @@ const sitesRouter = router({
 });
 
 // ─── Publisher Engine ─────────────────────────────────────────────────────────
+
+/** 后台异步执行发布任务（不阻塞 HTTP 响应） */
+async function runPublishTaskAsync(
+  taskId: number,
+  task: { materialId: number | null; siteId: number | null; accountId: number; retryCount: number | null },
+  account: Awaited<ReturnType<typeof getAccountById>>,
+  material: Awaited<ReturnType<typeof getMaterialById>>
+) {
+  if (!account || !material) return;
+  let siteUrl: string | undefined;
+  if (task.siteId) {
+    const site = await getGoogleSiteById(task.siteId);
+    siteUrl = site?.siteUrl ?? undefined;
+  } else if ((account as any).defaultSiteUrl) {
+    siteUrl = (account as any).defaultSiteUrl;
+  }
+  const proxyConfig = (account as any).proxyConfig as any;
+  const fingerprintData = (account as any).browserFingerprint as any;
+  try {
+    const result = await googleSitesPublisher.publish({
+      cookieParsed: (account as any).cookieParsed as any[],
+      siteName: (account as any).defaultSiteName ?? "gsp-site",
+      title: material.title,
+      content: material.content,
+      siteUrl,
+      proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
+      fingerprint: fingerprintData ?? generateFingerprint(account.id),
+      headless: true,
+      timeout: 120000,
+    });
+    if (result.success) {
+      await updatePublishTask(taskId, {
+        status: "success",
+        completedAt: new Date(),
+        publishedUrl: result.publishedUrl,
+        engineLog: result.log.join("\n"),
+      });
+      if (task.materialId) await updateMaterial(task.materialId, { status: "published" });
+      await createLog({ level: "success", category: "publish", title: `发布成功：${material.title}`, message: `任务 #${taskId} 发布成功\n发布链接：${result.publishedUrl}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: taskId });
+      if (result.publishedUrl) {
+        await createIndexingRecord({
+          publishedUrl: result.publishedUrl,
+          title: material.title,
+          keyword: material.keyword ?? undefined,
+          accountId: task.accountId,
+          siteId: task.siteId ?? undefined,
+          taskId,
+          indexStatus: "pending",
+        });
+        await createPublishedPage({
+          taskId,
+          materialId: task.materialId ?? undefined,
+          accountId: task.accountId,
+          siteId: task.siteId ?? undefined,
+          title: material.title,
+          keyword: material.keyword ?? undefined,
+          publishedUrl: result.publishedUrl,
+          siteUrl: task.siteId ? (await getGoogleSiteById(task.siteId))?.siteUrl ?? undefined : undefined,
+          language: material.language ?? "zh-CN",
+          wordCount: material.wordCount ?? undefined,
+          qualityScore: material.qualityScore ?? undefined,
+          indexStatus: "pending",
+          gscSubmitted: 0,
+        });
+        const gscKey = await getSettingByKey("gscServiceAccountKey");
+        const publishedUrlForGsc = result.publishedUrl;
+        if (gscKey?.value && publishedUrlForGsc) {
+          submitUrlToGsc(publishedUrlForGsc, gscKey.value).then(async (gscResult) => {
+            if (gscResult.success) {
+              const pages = await getPublishedPages({ limit: 5 });
+              const page = (pages as Array<{ id: number; publishedUrl: string | null }>)
+                .find(p => p.publishedUrl === publishedUrlForGsc);
+              if (page) {
+                await updatePublishedPage(page.id, {
+                  gscSubmitted: 1,
+                  gscSubmittedAt: new Date(),
+                  gscResponse: gscResult.response,
+                });
+              }
+            }
+          }).catch(() => {});
+        }
+      }
+    } else {
+      await updatePublishTask(taskId, {
+        status: "failed",
+        completedAt: new Date(),
+        errorMessage: result.errorMessage,
+        engineLog: result.log.join("\n"),
+        retryCount: (task.retryCount ?? 0) + 1,
+      });
+      await createLog({ level: "error", category: "publish", title: `发布失败：${material.title}`, message: `任务 #${taskId} 发布失败\n错误：${result.errorMessage}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: taskId });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await updatePublishTask(taskId, { status: "failed", completedAt: new Date(), errorMessage: msg, engineLog: msg });
+    await createLog({ level: "error", category: "publish", title: `发布异常：${material.title}`, message: `任务 #${taskId} 发生异常\n${msg}`, entityType: "task", entityId: taskId });
+  }
+}
+
 const publisherRouter = router({
   // 诊断端点：查询生产环境 Chromium 状态
   chromiumDiag: publicProcedure.query(async () => {
@@ -1028,115 +1129,40 @@ const publisherRouter = router({
     return { success: true, valid: result.valid, email: result.email, log: result.log };
   }),
 
+  // 异步触发发布任务（立即返回，后台执行 Puppeteer）
   executeTask: protectedProcedure.input(z.object({
     taskId: z.number(),
   })).mutation(async ({ input }) => {
-    const tasks = await getPublishTasks();
-    const task = tasks.find(t => t.id === input.taskId);
+    const task = await getPublishTaskById(input.taskId);
     if (!task) throw new Error("任务不存在");
     if (!task.materialId) throw new Error("任务没有关联素材");
+    if (task.status === "running") throw new Error("任务正在执行中，请勿重复触发");
     const account = await getAccountById(task.accountId);
     if (!account) throw new Error("账号不存在");
     if (!account.cookieParsed) throw new Error("账号没有有效 Cookie");
     const material = await getMaterialById(task.materialId);
     if (!material) throw new Error("素材不存在");
-    let siteUrl: string | undefined;
-    if (task.siteId) {
-      const site = await getGoogleSiteById(task.siteId);
-      siteUrl = site?.siteUrl ?? undefined;
-    } else if (account.defaultSiteUrl) {
-      siteUrl = account.defaultSiteUrl;
-    }
-    await updatePublishTask(input.taskId, { status: "running", startedAt: new Date() });
-    const proxyConfig = account.proxyConfig as any;
-    const fingerprintData = account.browserFingerprint as any;
-    try {
-      const result = await googleSitesPublisher.publish({
-        cookieParsed: account.cookieParsed as any[],
-        siteName: account.defaultSiteName ?? "gsp-site",
-        title: material.title,
-        content: material.content,
-        siteUrl,
-        proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
-        fingerprint: fingerprintData ?? generateFingerprint(account.id),
-        headless: true,
-        timeout: 120000,
-      });
-      if (result.success) {
-        await updatePublishTask(input.taskId, {
-          status: "success",
-          completedAt: new Date(),
-          publishedUrl: result.publishedUrl,
-          engineLog: result.log.join("\n"),
-        });
-        await updateMaterial(task.materialId, { status: "published" });
-        await createLog({ level: "success", category: "publish", title: `发布成功：${material.title}`, message: `任务 #${input.taskId} 发布成功\n发布链接：${result.publishedUrl}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: input.taskId });
-        if (result.publishedUrl) {
-          // 保存收录监控记录
-          await createIndexingRecord({
-            publishedUrl: result.publishedUrl,
-            title: material.title,
-            keyword: material.keyword ?? undefined,
-            accountId: task.accountId,
-            siteId: task.siteId ?? undefined,
-            taskId: input.taskId,
-            indexStatus: "pending",
-          });
-          // 保存已发布链接记录
-          await createPublishedPage({
-            taskId: input.taskId,
-            materialId: task.materialId ?? undefined,
-            accountId: task.accountId,
-            siteId: task.siteId ?? undefined,
-            title: material.title,
-            keyword: material.keyword ?? undefined,
-            publishedUrl: result.publishedUrl,
-            siteUrl: task.siteId ? (await getGoogleSiteById(task.siteId))?.siteUrl ?? undefined : undefined,
-            language: material.language ?? "zh-CN",
-            wordCount: material.wordCount ?? undefined,
-            qualityScore: material.qualityScore ?? undefined,
-            indexStatus: "pending",
-            gscSubmitted: 0,
-          });
-          // GSC 自动提交（异步，不阻塞返回）
-          const gscKey = await getSettingByKey("gscServiceAccountKey");
-          const publishedUrlForGsc = result.publishedUrl;
-          if (gscKey?.value && publishedUrlForGsc) {
-            submitUrlToGsc(publishedUrlForGsc, gscKey.value).then(async (gscResult) => {
-              if (gscResult.success) {
-                // 通过 publishedUrl 查找记录并更新 GSC 提交状态
-                const pages = await getPublishedPages({ limit: 5 });
-                const page = (pages as Array<{ id: number; publishedUrl: string | null }>)
-                  .find(p => p.publishedUrl === publishedUrlForGsc);
-                if (page) {
-                  await updatePublishedPage(page.id, {
-                    gscSubmitted: 1,
-                    gscSubmittedAt: new Date(),
-                    gscResponse: gscResult.response,
-                  });
-                }
-              }
-            }).catch(() => {/* GSC 提交失败不影响发布结果 */});
-          }
-        }
-        return { success: true, publishedUrl: result.publishedUrl, log: result.log };
-      } else {
-        await updatePublishTask(input.taskId, {
-          status: "failed",
-          completedAt: new Date(),
-          errorMessage: result.errorMessage,
-          engineLog: result.log.join("\n"),
-          retryCount: (task.retryCount ?? 0) + 1,
-        });
-        await createLog({ level: "error", category: "publish", title: `发布失败：${material.title}`, message: `任务 #${input.taskId} 发布失败\n错误：${result.errorMessage}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: input.taskId });
-        return { success: false, errorMessage: result.errorMessage, log: result.log };
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      await updatePublishTask(input.taskId, { status: "failed", completedAt: new Date(), errorMessage: msg });
-      await createLog({ level: "error", category: "publish", title: `发布异常：${material.title}`, message: `任务 #${input.taskId} 发生异常\n${msg}`, entityType: "task", entityId: input.taskId });
-      throw error;
-    }
+    // 立即更新状态为 running，让前端知道任务已启动
+    await updatePublishTask(input.taskId, { status: "running", startedAt: new Date(), engineLog: "[任务已加入队列，正在启动浏览器...]" });
+    // 后台异步执行，不阻塞 HTTP 响应
+    runPublishTaskAsync(input.taskId, task, account, material).catch(() => {/* 错误已在函数内处理 */});
+    return { queued: true, taskId: input.taskId };
+  }),
+  // 查询任务当前状态和日志（前端轮询用）
+  getTaskStatus: protectedProcedure.input(z.object({
+    taskId: z.number(),
+  })).query(async ({ input }) => {
+    const task = await getPublishTaskById(input.taskId);
+    if (!task) throw new Error("任务不存在");
+    return {
+      id: task.id,
+      status: task.status,
+      publishedUrl: task.publishedUrl,
+      errorMessage: task.errorMessage,
+      engineLog: task.engineLog,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+    };
   }),
 });
 
