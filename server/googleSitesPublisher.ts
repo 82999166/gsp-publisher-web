@@ -301,24 +301,117 @@ export class GoogleSitesPublisher {
   /** 创建新的 Google Site 或导航到已有 Site */
   private async navigateToSite(page: Page, options: PublishOptions): Promise<string> {
     if (options.siteUrl) {
-      // 已有 Site，直接导航
+      // 已有 Site，直接导航到编辑器
       this.addLog(`导航到已有 Site: ${options.siteUrl}`);
-      await page.goto(options.siteUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await randomDelay(500, 800);
-      return options.siteUrl;
+      await page.goto(options.siteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await randomDelay(2000, 3000);
+
+      // 等待编辑器完全加载（URL 应包含 /d/ 表示是编辑器页面）
+      let editorUrl = page.url();
+      this.addLog(`导航后 URL: ${editorUrl}`);
+
+      // 如果被重定向到登录页，说明 Cookie 失效
+      if (editorUrl.includes('accounts.google.com') || editorUrl.includes('/signin')) {
+        throw new Error('导航到 Site 时被重定向到登录页，Cookie 可能已失效');
+      }
+
+      // 等待页面稳定（最多 15 秒）
+      try {
+        await page.waitForFunction(
+          () => !document.querySelector('.loading-spinner, [aria-label="Loading"]'),
+          { timeout: 15000 }
+        );
+      } catch {
+        this.addLog('等待加载动画消失超时，继续...');
+      }
+
+      editorUrl = page.url();
+      this.addLog(`编辑器最终 URL: ${editorUrl}`);
+      return editorUrl;
     }
 
-    // 创建新 Site
-    this.addLog("导航到 Google Sites 首页...");
+    // 没有配置 siteUrl，尝试从 /new 创建新站点
+    this.addLog("未配置 Site URL，导航到 Google Sites 首页创建新站点...");
     await page.goto("https://sites.google.com/new", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await randomDelay(800, 1200);
+    await randomDelay(2000, 3000);
 
-    // 等待编辑器加载
-    try {
-      await page.waitForSelector('[data-view-id="SITE_NAME_INPUT"], input[placeholder*="站点名称"], input[placeholder*="Site name"], input[aria-label*="name"]', { timeout: 15000 });
-      this.addLog("Google Sites 编辑器已加载");
-    } catch {
-      this.addLog("等待编辑器超时，尝试继续...");
+    const newPageUrl = page.url();
+    this.addLog(`当前 URL: ${newPageUrl}`);
+
+    // 如果还在 /new 页面，需要点击空白模板
+    if (newPageUrl.includes('/new') || !newPageUrl.includes('/d/')) {
+      this.addLog('在模板选择页，尝试点击空白模板...');
+
+      // 输出页面上所有可点击元素，帮助调试
+      try {
+        const clickables = await page.evaluate(() => {
+          const els = Array.from(document.querySelectorAll('[role="button"], button, [tabindex="0"]'));
+          return els.slice(0, 20).map(el => ({
+            tag: el.tagName,
+            ariaLabel: el.getAttribute('aria-label'),
+            text: el.textContent?.trim().slice(0, 50),
+            class: el.className?.slice(0, 50),
+          }));
+        });
+        this.addLog(`页面 DOM 调试（前20个可点击元素）: ${JSON.stringify(clickables)}`);
+      } catch {}
+
+      // 尝试多种选择器点击空白模板
+      const blankSelectors = [
+        '[aria-label="Blank"]',
+        '[aria-label="空白"]',
+        '[data-id="blank"]',
+        '[jsname="blank"]',
+        'div[role="button"]:first-child',
+      ];
+
+      let clicked = false;
+      for (const sel of blankSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el) {
+            await el.click();
+            clicked = true;
+            this.addLog(`点击了空白模板: ${sel}`);
+            break;
+          }
+        } catch {}
+      }
+
+      if (!clicked) {
+        // 尝试通过文字查找
+        try {
+          const found = await page.evaluate(() => {
+            const els = Array.from(document.querySelectorAll('[role="button"], div[tabindex="0"]'));
+            const blank = els.find(el => {
+              const text = el.textContent?.trim().toLowerCase();
+              return text === 'blank' || text === '空白' || el.getAttribute('aria-label')?.toLowerCase().includes('blank');
+            });
+            if (blank) { (blank as HTMLElement).click(); return true; }
+            return false;
+          });
+          if (found) {
+            clicked = true;
+            this.addLog('通过文字查找点击了空白模板');
+          }
+        } catch {}
+      }
+
+      if (clicked) {
+        // 等待跳转到编辑器（URL 包含 /d/）
+        try {
+          await page.waitForFunction(
+            () => window.location.href.includes('/d/'),
+            { timeout: 20000 }
+          );
+          this.addLog('已跳转到编辑器');
+        } catch {
+          this.addLog('等待跳转到编辑器超时');
+        }
+      } else {
+        this.addLog('未能点击空白模板，请在账号设置中配置 defaultSiteUrl');
+        throw new Error('未配置 Google Site 编辑器地址。请在账号管理中编辑账号，填写「Google Site 编辑器地址」字段。');
+      }
     }
 
     const currentUrl = page.url();

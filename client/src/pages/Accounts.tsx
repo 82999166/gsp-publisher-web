@@ -58,6 +58,8 @@ type Account = {
   createdAt?: Date | null;
   proxyConfig?: any;
   browserFingerprint?: any;
+  defaultSiteUrl?: string | null;
+  defaultSiteName?: string | null;
 };
 
 type ProxyForm = {
@@ -279,6 +281,8 @@ export default function Accounts() {
       siteAge: editAccount.siteAge as any,
       notes: editAccount.notes ?? undefined,
       proxyConfig: editAccount.proxyEnabled ? proxyConfig : null,
+      defaultSiteUrl: editAccount.defaultSiteUrl ?? undefined,
+      defaultSiteName: editAccount.defaultSiteName ?? undefined,
     });
   }
 
@@ -553,6 +557,45 @@ export default function Accounts() {
                   value={editAccount.notes ?? ""}
                   onChange={e => setEditAccount(a => a ? { ...a, notes: e.target.value } : a)}
                 />
+              </div>
+
+              {/* Google Site URL 配置 */}
+              <div className="border border-green-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 bg-green-50 border-b border-green-200">
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium text-green-800">Google Site 编辑器地址（必填）</span>
+                    {editAccount.defaultSiteUrl && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-200">已配置</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-green-700 mt-1">发布文章需要指定一个已有的 Google Site。请先在 Google Sites 中手动创建一个站点，然后将编辑器 URL 粘贴到下方。</p>
+                </div>
+                <div className="p-4 space-y-3">
+                  <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-3 space-y-1">
+                    <p className="font-medium text-amber-800">如何获取 Google Site 编辑器地址：</p>
+                    <p>1. 用此账号登录 Google，访问 <strong>sites.google.com</strong></p>
+                    <p>2. 点击「空白」创建新站点，或打开已有站点</p>
+                    <p>3. 进入编辑器后，复制浏览器地址栏的 URL</p>
+                    <p>4. 格式类似：<code className="bg-amber-100 px-1 rounded">https://sites.google.com/u/0/d/1qQM.../p/...</code></p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">编辑器 URL</Label>
+                    <Input
+                      placeholder="https://sites.google.com/u/0/d/xxxxx/p/xxxxx/preview"
+                      value={editAccount.defaultSiteUrl ?? ""}
+                      onChange={e => setEditAccount(a => a ? { ...a, defaultSiteUrl: e.target.value } : a)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">站点名称（可选）</Label>
+                    <Input
+                      placeholder="如：my-seo-site-2024"
+                      value={editAccount.defaultSiteName ?? ""}
+                      onChange={e => setEditAccount(a => a ? { ...a, defaultSiteName: e.target.value } : a)}
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Cookie 修改区域 */}
