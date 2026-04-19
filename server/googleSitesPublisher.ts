@@ -224,16 +224,21 @@ export class GoogleSitesPublisher {
   private async injectCookiesAndVerify(page: Page, cookies: CookieEntry[]): Promise<boolean> {
     this.addLog(`注入 ${cookies.length} 条 Cookie...`);
 
-    // 先导航到 Google 域名，再设置 Cookie
-    await page.goto("https://accounts.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await randomDelay(200, 400);
+    // 策略：先设置 Cookie，再导航到目标页面（避免先导航触发 Google 反自动化检测）
+    // 分别为不同域名设置 Cookie
+    const googleDomains = [".google.com", "accounts.google.com", "sites.google.com"];
 
     for (const cookie of cookies) {
       try {
+        // 确保 domain 格式正确（必须以 . 开头或为完整域名）
+        let domain = cookie.domain || ".google.com";
+        if (!domain.startsWith('.') && !domain.startsWith('http')) {
+          domain = '.' + domain;
+        }
         await page.setCookie({
           name: cookie.name,
           value: cookie.value,
-          domain: cookie.domain || ".google.com",
+          domain,
           path: cookie.path || "/",
           expires: cookie.expires,
           httpOnly: cookie.httpOnly,
@@ -245,20 +250,52 @@ export class GoogleSitesPublisher {
       }
     }
 
-    // 验证登录状态
-    await page.goto("https://myaccount.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await randomDelay(500, 800);
+    this.addLog("Cookie 已设置，导航到 Google Sites 验证登录状态...");
+
+    // 验证：直接导航到 sites.google.com（我们实际要用的服务）
+    // 而不是 myaccount.google.com（对自动化工具更严格）
+    await page.goto("https://sites.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await randomDelay(1000, 1500);
 
     const url = page.url();
-    const isLoggedIn = !url.includes("accounts.google.com/signin") && !url.includes("accounts.google.com/v3");
+    this.addLog(`导航后 URL: ${url}`);
 
-    if (isLoggedIn) {
-      this.addLog("Cookie 验证成功，已登录 Google 账号");
-    } else {
+    // 判断是否登录成功：
+    // - 如果还在 accounts.google.com 登录页 → 失败
+    // - 如果在 sites.google.com → 成功
+    const isRedirectedToLogin = url.includes("accounts.google.com/signin") ||
+      url.includes("accounts.google.com/v3") ||
+      url.includes("/ServiceLogin") ||
+      url.includes("/CheckCookie");
+
+    const isOnSites = url.includes("sites.google.com");
+
+    // 如果被重定向到登录页，尝试第二种验证方式
+    if (isRedirectedToLogin) {
+      this.addLog(`被重定向到登录页: ${url}`);
+      // 尝试导航到 drive.google.com 作为备选验证
+      await page.goto("https://drive.google.com", { waitUntil: "domcontentloaded", timeout: 30000 });
+      await randomDelay(800, 1200);
+      const driveUrl = page.url();
+      this.addLog(`Drive URL: ${driveUrl}`);
+      const isOnDrive = driveUrl.includes("drive.google.com") && !driveUrl.includes("accounts.google.com");
+      if (isOnDrive) {
+        this.addLog("Cookie 验证成功（通过 Drive 验证）");
+        return true;
+      }
       this.addLog("Cookie 验证失败，账号可能已过期");
+      return false;
     }
 
-    return isLoggedIn;
+    if (isOnSites) {
+      this.addLog("Cookie 验证成功，已登录 Google 账号");
+      return true;
+    }
+
+    // 其他情况：输出调试信息
+    this.addLog(`未知状态，当前 URL: ${url}，尝试继续...`);
+    // 如果 URL 不是登录页，就认为登录成功
+    return !isRedirectedToLogin;
   }
 
   /** 创建新的 Google Site 或导航到已有 Site */
