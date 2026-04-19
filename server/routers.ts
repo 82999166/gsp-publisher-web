@@ -24,6 +24,9 @@ import {
 import { googleSitesPublisher } from "./googleSitesPublisher";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
+import axios from "axios";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 
 // ─── AI Config Helper ─────────────────────────────────────────────────────────
 // Reads AI provider/key/model/url from DB settings, used for all invokeLLM calls
@@ -1127,6 +1130,66 @@ const publisherRouter = router({
       ...(result.email ? { email: result.email } : {}),
     });
     return { success: true, valid: result.valid, email: result.email, log: result.log };
+  }),
+
+  // 验证代理连通性
+  verifyProxy: protectedProcedure.input(z.object({
+    host: z.string(),
+    port: z.number(),
+    protocol: z.string().optional(),
+    username: z.string().optional(),
+    password: z.string().optional(),
+  })).mutation(async ({ input }) => {
+    const { host, port, protocol = "http", username, password } = input;
+    const startTime = Date.now();
+    try {
+      // 构建代理 URL（含认证信息）
+      const auth = username && password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
+      const proxyUrl = `${protocol}://${auth}${host}:${port}`;
+
+      // 根据协议选择 agent
+      let agent: any;
+      if (protocol.startsWith("socks")) {
+        agent = new SocksProxyAgent(proxyUrl);
+      } else {
+        agent = new HttpsProxyAgent(proxyUrl);
+      }
+
+      // 通过代理请求 ip-api.com 获取出口 IP 和地区
+      const resp = await axios.get("http://ip-api.com/json", {
+        httpAgent: agent,
+        httpsAgent: agent,
+        timeout: 15000,
+        proxy: false, // 禁用 axios 默认代理，使用 agent
+      });
+
+      const latency = Date.now() - startTime;
+      const data = resp.data;
+
+      return {
+        success: true,
+        latency,
+        ip: data.query ?? "未知",
+        country: data.country ?? "未知",
+        region: data.regionName ?? "未知",
+        city: data.city ?? "未知",
+        isp: data.isp ?? "未知",
+        message: `✅ 代理连通！出口 IP: ${data.query}，地区: ${data.country} ${data.city}，延迟: ${latency}ms`,
+      };
+    } catch (err: any) {
+      const latency = Date.now() - startTime;
+      const msg = err?.message ?? String(err);
+      return {
+        success: false,
+        latency,
+        ip: "",
+        country: "",
+        region: "",
+        city: "",
+        isp: "",
+        message: `❌ 代理连接失败（${latency}ms）: ${msg}`,
+      };
+    }
   }),
 
   // 异步触发发布任务（立即返回，后台执行 Puppeteer）

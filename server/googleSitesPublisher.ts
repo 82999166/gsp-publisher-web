@@ -471,80 +471,105 @@ export class GoogleSitesPublisher {
     const docId = docIdMatch ? docIdMatch[1] : null;
     this.addLog(`当前 URL: ${editorUrl}, docId: ${docId}`);
 
-    // ── 阶段2：填入标题 ────────────────────────────────────────────────────────
-    // Google Sites 新站点的标题输入框选择器（多种备选）
-    const titleSelectors = [
-      '[data-placeholder="Page title"]',
-      '[aria-label="Page title"]',
-      '[data-placeholder="Title"]',
-      '[aria-label="Title"]',
-      'h1[contenteditable="true"]',
-      '[role="heading"][contenteditable="true"]',
-    ];
+    // ── 截图调试：保存编辑器截图和 DOM 结构 ────────────────────────────────────
+    try {
+      // 保存截图
+      await page.screenshot({ path: '/tmp/gsp_editor_debug.png', fullPage: false });
+      this.addLog('截图已保存到 /tmp/gsp_editor_debug.png');
 
-    let titleFilled = false;
-    for (const selector of titleSelectors) {
-      try {
-        const el = await page.$(selector);
-        if (el) {
-          await el.click();
-          await randomDelay(100, 200);
-          await page.keyboard.down('Control');
-          await page.keyboard.press('a');
-          await page.keyboard.up('Control');
-          await page.keyboard.type(title, { delay: 30 });
-          titleFilled = true;
-          this.addLog(`已填入标题: ${title} (选择器: ${selector})`);
-          break;
-        }
-      } catch {
-        // 继续
-      }
+      // 输出页面中所有 contenteditable 元素的信息
+      const editableEls = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('[contenteditable]'));
+        return els.map(el => ({
+          tag: el.tagName,
+          contenteditable: el.getAttribute('contenteditable'),
+          ariaLabel: el.getAttribute('aria-label'),
+          dataPlaceholder: el.getAttribute('data-placeholder'),
+          role: el.getAttribute('role'),
+          className: el.className?.slice(0, 80),
+          text: el.textContent?.trim().slice(0, 50),
+          id: el.id,
+        }));
+      });
+      this.addLog(`页面 contenteditable 元素 (${editableEls.length}个): ${JSON.stringify(editableEls.slice(0, 10))}`);
+
+      // 输出页面中所有 iframe 信息
+      const iframes = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('iframe'));
+        return els.map(el => ({
+          src: el.src?.slice(0, 100),
+          id: el.id,
+          className: el.className?.slice(0, 50),
+          ariaLabel: el.getAttribute('aria-label'),
+        }));
+      });
+      this.addLog(`页面 iframe (${iframes.length}个): ${JSON.stringify(iframes.slice(0, 5))}`);
+    } catch (debugErr) {
+      this.addLog(`调试信息获取失败: ${debugErr}`);
     }
 
-    if (!titleFilled) {
-      // 快速写入失败，回退到键盘输入模式
-      this.addLog("未找到标题输入框");
-      this.addLog("快速写入失败，回退到键盘输入模式...");
-      // 尝试点击页面中央然后输入
+    // ── 阶段2：写入标题和正文内容 ────────────────────────────────────────────
+    // Google Sites 编辑器中，文本组件默认 contenteditable="false"
+    // 需要先双击激活编辑模式，才能输入内容
+
+    // 等待文本组件出现
+    let textboxEl = null;
+    try {
+      await page.waitForSelector('[role="textbox"]', { timeout: 10000 });
+      textboxEl = await page.$('[role="textbox"]');
+      this.addLog('找到文本组件 [role="textbox"]');
+    } catch {
+      this.addLog('未找到 [role="textbox"]');
+    }
+
+    let contentWritten = false;
+
+    if (textboxEl) {
       try {
-        await page.keyboard.type(title, { delay: 30 });
-        this.addLog(`键盘输入标题完成`);
+        // 双击激活编辑模式
+        await textboxEl.click({ clickCount: 2 });
+        await randomDelay(500, 800);
+
+        // 检查是否进入了编辑模式
+        const isEditable = await page.evaluate(() => {
+          const el = document.querySelector('[role="textbox"]');
+          return el?.getAttribute('contenteditable') === 'true';
+        });
+        this.addLog(`双击后 contenteditable: ${isEditable}`);
+
+        // 全选并删除原有内容
+        await page.keyboard.down('Control');
+        await page.keyboard.press('a');
+        await page.keyboard.up('Control');
+        await randomDelay(100, 200);
+        await page.keyboard.press('Delete');
+        await randomDelay(100, 200);
+
+        // 写入标题（第一行）
+        await page.keyboard.type(title, { delay: 20 });
+        await page.keyboard.press('Enter');
+        await randomDelay(100, 200);
+
+        // 写入正文内容
+        for (const section of sections) {
+          if (section.type === 'h1') continue; // 标题已单独写入
+          await page.keyboard.type(section.text, { delay: 10 });
+          await page.keyboard.press('Enter');
+          await randomDelay(10, 20);
+        }
+
+        contentWritten = true;
+        this.addLog(`内容已写入，标题: ${title}，共 ${sections.length} 段`);
       } catch (e) {
-        this.addLog(`键盘输入也失败: ${e}`);
+        this.addLog(`内容写入失败: ${e}`);
       }
     }
 
-    await randomDelay(200, 400);
-
-    // ── 阶段3：填入正文内容 ────────────────────────────────────────────────────
-    const bodySelectors = [
-      '[data-placeholder="Start typing..."]',
-      '[aria-label="Page content"]',
-      '[contenteditable="true"]:not([role="heading"])',
-    ];
-
-    for (const selector of bodySelectors) {
-      try {
-        const el = await page.$(selector);
-        if (el) {
-          await el.click();
-          this.addLog("已定位到正文编辑区");
-
-          for (const section of sections) {
-            if (section.type === "h1") continue; // 标题已单独设置
-            await page.keyboard.type(section.text, { delay: 15 });
-            await page.keyboard.press("Enter");
-            await randomDelay(10, 30);
-          }
-
-          this.addLog(`正文内容已填入，共 ${sections.length} 段`);
-          break;
-        }
-      } catch {
-        // 继续
-      }
+    if (!contentWritten) {
+      this.addLog('内容写入失败，将发布当前页面内容');
     }
+
+    await randomDelay(500, 1000);
 
     await randomDelay(300, 600);
 

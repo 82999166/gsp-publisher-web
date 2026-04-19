@@ -193,6 +193,37 @@ export default function Accounts() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const verifyProxyMutation = trpc.publisher.verifyProxy.useMutation();
+  const [proxyVerifyResult, setProxyVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [proxyVerifying, setProxyVerifying] = useState(false);
+
+  async function handleVerifyProxy() {
+    if (!editAccount?.proxyForm.host.trim()) {
+      toast.error("请先填写代理主机地址");
+      return;
+    }
+    const port = parseInt(editAccount.proxyForm.port);
+    if (!port || port < 1 || port > 65535) {
+      toast.error("代理端口格式错误（1-65535）");
+      return;
+    }
+    setProxyVerifying(true);
+    setProxyVerifyResult(null);
+    try {
+      const result = await verifyProxyMutation.mutateAsync({
+        host: editAccount.proxyForm.host.trim(),
+        port,
+        protocol: editAccount.proxyForm.protocol,
+        username: editAccount.proxyForm.username.trim() || undefined,
+        password: editAccount.proxyForm.password.trim() || undefined,
+      });
+      setProxyVerifyResult(result);
+    } catch (e: any) {
+      setProxyVerifyResult({ success: false, message: e.message });
+    } finally {
+      setProxyVerifying(false);
+    }
+  }
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -729,6 +760,32 @@ export default function Accounts() {
                               onChange={e => setEditAccount(a => a ? { ...a, proxyForm: { ...a.proxyForm, password: e.target.value } } : a)}
                             />
                           </div>
+                        </div>
+                        {/* 验证代理按鈕 */}
+                        <div className="pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleVerifyProxy}
+                            disabled={proxyVerifying}
+                            className="gap-2 w-full"
+                          >
+                            {proxyVerifying ? (
+                              <><RefreshCw className="h-3.5 w-3.5 animate-spin" />验证中，请稍候...</>
+                            ) : (
+                              <><Globe className="h-3.5 w-3.5" />验证代理连通性</>
+                            )}
+                          </Button>
+                          {proxyVerifyResult && (
+                            <div className={`mt-2 text-xs rounded p-2.5 border ${
+                              proxyVerifyResult.success
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                                : "bg-red-50 border-red-200 text-red-800"
+                            }`}>
+                              {proxyVerifyResult.message}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
