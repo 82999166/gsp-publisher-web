@@ -521,87 +521,8 @@ export class GoogleSitesPublisher {
 
     await randomDelay(300, 600);
 
-    // ── 阶段4：设置网络拦截，监听 sitename/create 响应获取真实 slug ────────────
-    let capturedSlug: string | null = null;
-
-    // 启用请求拦截
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      req.continue();
-    });
-
-    // 监听响应，捕获 sitename/create 的结果
-    const responseHandler = async (response: any) => {
-      try {
-        const url = response.url();
-        if (url.includes('/sitename/create')) {
-          const text = await response.text();
-          // 响应格式: )]}' \n[["at:snd:sn","slug-name"],...]
-          const jsonMatch = text.replace(')]}\'\'\n', '').replace(')]}\'\n', '');
-          const parsed = JSON.parse(jsonMatch);
-          if (Array.isArray(parsed) && parsed[0] && parsed[0][0] === 'at:snd:sn') {
-            capturedSlug = parsed[0][1];
-            this.addLog(`✅ 网络拦截获取到真实 slug: ${capturedSlug}`);
-          }
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    };
-    page.on('response', responseHandler);
-
-    // ── 阶段5：点击发布按钮（打开发布弹窗）────────────────────────────────────
-    // Google Sites 发布按钮的多种选择器
-    const publishBtnSelectors = [
-      '[jsname="RgZmSc"]',
-      '[aria-label="Publish"]',
-      '[aria-label="发布"]',
-      'button[jsname="RgZmSc"]',
-    ];
-
-    let publishClicked = false;
-    for (const selector of publishBtnSelectors) {
-      try {
-        const el = await page.$(selector);
-        if (el) {
-          await el.click();
-          publishClicked = true;
-          this.addLog(`已点击发布按钮: ${selector}`);
-          break;
-        }
-      } catch {
-        // 继续
-      }
-    }
-
-    if (!publishClicked) {
-      // 通过文字查找发布按钮
-      try {
-        const clicked = await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('[role="button"], button'));
-          const btn = btns.find(b => {
-            const text = b.textContent?.trim();
-            return text === 'Publish' || text === '发布';
-          });
-          if (btn) { (btn as HTMLElement).click(); return true; }
-          return false;
-        });
-        if (clicked) {
-          publishClicked = true;
-          this.addLog("通过文字查找点击了发布按钮");
-        } else {
-          this.addLog("API 发布失败，回退到 UI 点击发布...");
-        }
-      } catch {
-        this.addLog("未找到发布按钮");
-      }
-    }
-
-    // 等待发布弹窗出现
-    await randomDelay(1500, 2000);
-
-    // ── 阶段6：在弹窗中填入 slug 并确认 ────────────────────────────────────────
-    // 生成站点 URL slug
+    // ── 阶段4：直接调用 Google Sites 内部 API 发布 ────────────────────────────────────
+    // 生成 slug
     const slugBase = title
       .toLowerCase()
       .replace(/[\u4e00-\u9fa5]/g, 'x')
@@ -610,146 +531,106 @@ export class GoogleSitesPublisher {
       .replace(/^-|-$/g, '')
       .substring(0, 20) || 'site';
     const siteSlug = `${slugBase}-${Date.now().toString(36)}`;
-    this.addLog(`生成站点 slug: ${siteSlug}`);
+    this.addLog(`生成 slug: ${siteSlug}`);
 
-    // 查找弹窗中的 slug 输入框
-    const slugInputSelectors = [
-      'input[placeholder*="web address"]',
-      'input[placeholder*="网址"]',
-      'input[aria-label*="web address"]',
-      'input[aria-label*="网址"]',
-      '[jsname="YPqjbf"]',
-      'input[jsname="YPqjbf"]',
-      'input[type="text"][jsname]',
-    ];
+    // 通过 page.evaluate 在浏览器上下文中直接调用 API
+    // 这样可以利用浏览器的 Cookie 和会话，无需额外认证
+    const publishResult = await page.evaluate(async (params: {
+      docId: string;
+      slug: string;
+      editorUrl: string;
+    }) => {
+      const { docId, slug, editorUrl } = params;
 
-    let slugFilled = false;
-    for (const selector of slugInputSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        const el = await page.$(selector);
-        if (el) {
-          await el.click();
-          await page.keyboard.down('Control');
-          await page.keyboard.press('a');
-          await page.keyboard.up('Control');
-          await page.keyboard.type(siteSlug, { delay: 30 });
-          slugFilled = true;
-          this.addLog(`已在弹窗中填入站点 slug: ${siteSlug} (选择器: ${selector})`);
-          break;
-        }
-      } catch {
-        // 继续
+      // 从编辑器 URL 提取 token
+      const urlObj = new URL(editorUrl);
+      let token = urlObj.searchParams.get('token');
+
+      // 如果 URL 中没有 token，尝试从当前页面 URL 获取
+      if (!token) {
+        const currentUrl = new URL(window.location.href);
+        token = currentUrl.searchParams.get('token');
       }
-    }
 
-    if (!slugFilled) {
-      this.addLog("未找到 slug 输入框，可能弹窗未出现或已有 slug");
-    }
-
-    await randomDelay(500, 800);
-
-    // 点击弹窗中的「发布」确认按钮
-    const confirmSelectors = [
-      '[jsname="M2UYVd"]',
-      'button[jsname="M2UYVd"]',
-      '.VfPpkd-LgbsSe[data-mdc-dialog-action="ok"]',
-      '[data-mdc-dialog-action="ok"]',
-    ];
-
-    let confirmed = false;
-    for (const selector of confirmSelectors) {
-      try {
-        const el = await page.$(selector);
-        if (el) {
-          await el.click();
-          confirmed = true;
-          this.addLog(`已点击弹窗确认发布按钮: ${selector}`);
-          break;
-        }
-      } catch {
-        // 继续
+      if (!token) {
+        return { success: false, error: '无法从 URL 获取 token，当前 URL: ' + window.location.href };
       }
-    }
 
-    if (!confirmed) {
-      // 通过文字查找弹窗中的确认按钮
-      try {
-        const clicked = await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
-          const confirmBtn = btns.find(b => {
-            const text = b.textContent?.trim();
-            return (text === 'Publish' || text === '发布') && b.closest('[role="dialog"]');
-          });
-          if (confirmBtn) { (confirmBtn as HTMLElement).click(); return true; }
-          return false;
+      const baseUrl = `https://sites.google.com/u/0/d/${docId}`;
+      const commonParams = `token=${encodeURIComponent(token)}&authuser=0`;
+
+      const doPost = async (endpoint: string, body: string) => {
+        const resp = await fetch(`${baseUrl}/${endpoint}?${commonParams}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: `f.req=${encodeURIComponent(body)}`,
+          credentials: 'include',
         });
-        if (clicked) {
-          confirmed = true;
-          this.addLog("通过文字查找点击了弹窗确认发布按钮");
-        } else {
-          this.addLog("未找到弹窗确认发布按钮，通过 UI 点击发布...");
-          // 最后尝试：直接点击页面上所有可见的「发布」按钮
-          await page.evaluate(() => {
-            const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
-            const publishBtns = allBtns.filter(b => {
-              const text = b.textContent?.trim();
-              return text === 'Publish' || text === '发布';
-            });
-            // 点击最后一个（通常是弹窗中的确认按钮）
-            if (publishBtns.length > 0) {
-              (publishBtns[publishBtns.length - 1] as HTMLElement).click();
-            }
-          });
-          confirmed = true;
-          this.addLog("通过 UI 点击发布...");
+        const text = await resp.text();
+        return { status: resp.status, text };
+      };
+
+      try {
+        // 1. 检查 slug 是否可用
+        const checkResp = await doPost('sitename/check', `[null,["at:snd:sn","${slug}",1]]`);
+        // 响应: )]}' \n[["at:sna:csnrs",true],...] 表示可用
+        const checkAvailable = checkResp.text.includes('"at:sna:csnrs",true');
+        if (!checkAvailable) {
+          // slug 已被占用，加随机后缀
+          const newSlug = slug + '-' + Math.random().toString(36).slice(2, 6);
+          const checkResp2 = await doPost('sitename/check', `[null,["at:snd:sn","${newSlug}",1]]`);
+          if (!checkResp2.text.includes('"at:sna:csnrs",true')) {
+            return { success: false, error: 'slug 已被占用，无法创建' };
+          }
+          // 使用新 slug
+          const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${newSlug}",1]]`);
+          const createdSlug = newSlug;
+          // 2. 设置公开权限
+          await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
+          // 3. 执行发布
+          const publishResp = await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
+          return {
+            success: true,
+            slug: createdSlug,
+            checkText: checkResp.text.slice(0, 100),
+            createText: createResp.text.slice(0, 100),
+            publishText: publishResp.text.slice(0, 100),
+          };
         }
-      } catch {
-        this.addLog("未找到弹窗确认发布按钮，可能弹窗未出现");
+
+        // 2. 创建 slug
+        const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${slug}",1]]`);
+        // 3. 设置公开权限
+        await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
+        // 4. 执行发布
+        const publishResp = await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
+
+        return {
+          success: true,
+          slug,
+          checkText: checkResp.text.slice(0, 100),
+          createText: createResp.text.slice(0, 100),
+          publishText: publishResp.text.slice(0, 100),
+        };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
       }
-    }
+    }, { docId: docId!, slug: siteSlug, editorUrl });
 
-    // ── 阶段7：等待发布完成，获取真实 slug ────────────────────────────────────
-    // 等待网络请求完成（sitename/create 响应）
-    await randomDelay(3000, 4000);
+    this.addLog(`API 发布结果: ${JSON.stringify(publishResult)}`);
 
-    // 移除事件监听器
-    page.off('response', responseHandler);
-    await page.setRequestInterception(false);
-
-    // ── 阶段8：构建正确的发布 URL ──────────────────────────────────────────────
+    // ── 阶段5：构建发布 URL ────────────────────────────────────────────────────────────────────────
     let publishedUrl: string;
 
-    if (capturedSlug) {
-      // 优先使用网络拦截获取的真实 slug
-      publishedUrl = `https://sites.google.com/view/${capturedSlug}/`;
-      this.addLog(`使用网络拦截获取的真实 slug 构建 URL: ${publishedUrl}`);
-    } else if (slugFilled && confirmed) {
-      // 使用我们填入的 slug
-      publishedUrl = `https://sites.google.com/view/${siteSlug}/`;
-      this.addLog(`使用填入的 slug 构建 URL: ${publishedUrl}`);
+    if (publishResult.success && publishResult.slug) {
+      publishedUrl = `https://sites.google.com/view/${publishResult.slug}/`;
+      this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
     } else {
-      // 回退：尝试从页面 URL 中提取信息
+      // API 调用失败，尝试从页面获取
+      this.addLog(`API 发布失败: ${publishResult.error || '未知错误'}`);
       const currentUrl = page.url();
-      this.addLog(`无法获取 slug，当前页面 URL: ${currentUrl}`);
-      // 尝试通过 JS 从页面获取发布 URL
-      try {
-        const pageSlug = await page.evaluate(() => {
-          // 尝试从页面 meta 标签或 window 对象获取发布 URL
-          const canonical = document.querySelector('link[rel="canonical"]');
-          if (canonical) return canonical.getAttribute('href');
-          return null;
-        });
-        if (pageSlug && pageSlug.includes('sites.google.com/view/')) {
-          publishedUrl = pageSlug;
-          this.addLog(`从页面 meta 获取发布 URL: ${publishedUrl}`);
-        } else {
-          publishedUrl = currentUrl;
-          this.addLog(`使用当前页面 URL: ${currentUrl}`);
-        }
-      } catch {
-        publishedUrl = currentUrl;
-      }
+      publishedUrl = currentUrl;
+      this.addLog(`回退使用当前 URL: ${currentUrl}`);
     }
 
     this.addLog(`发布完成，URL: ${publishedUrl}`);
