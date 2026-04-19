@@ -298,13 +298,36 @@ export class GoogleSitesPublisher {
     return !isRedirectedToLogin;
   }
 
+  /** 从页面请求中捕获的 token（用于 API 调用） */
+  private capturedToken: string | null = null;
+
   /** 创建新的 Google Site 或导航到已有 Site */
   private async navigateToSite(page: Page, options: PublishOptions): Promise<string> {
+    // 重置 token
+    this.capturedToken = null;
+
+    // 启动请求监听，从 bind 请求中提取 token
+    const tokenHandler = (req: any) => {
+      try {
+        const url: string = req.url();
+        if (url.includes('/bind?') || url.includes('/bind ')) {
+          const match = url.match(/[?&]token=([^&]+)/);
+          if (match && match[1]) {
+            const token = decodeURIComponent(match[1]);
+            if (!this.capturedToken) {
+              this.capturedToken = token;
+              this.addLog(`✅ 从 bind 请求捕获 token: ${token.slice(0, 30)}...`);
+            }
+          }
+        }
+      } catch {}
+    };
+    page.on('request', tokenHandler);
+
     if (options.siteUrl) {
       // 已有 Site，直接导航到编辑器
       this.addLog(`导航到已有 Site: ${options.siteUrl}`);
       await page.goto(options.siteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await randomDelay(2000, 3000);
 
       // 等待编辑器完全加载（URL 应包含 /d/ 表示是编辑器页面）
       let editorUrl = page.url();
@@ -312,19 +335,23 @@ export class GoogleSitesPublisher {
 
       // 如果被重定向到登录页，说明 Cookie 失效
       if (editorUrl.includes('accounts.google.com') || editorUrl.includes('/signin')) {
+        page.off('request', tokenHandler);
         throw new Error('导航到 Site 时被重定向到登录页，Cookie 可能已失效');
       }
 
-      // 等待页面稳定（最多 15 秒）
-      try {
-        await page.waitForFunction(
-          () => !document.querySelector('.loading-spinner, [aria-label="Loading"]'),
-          { timeout: 15000 }
-        );
-      } catch {
-        this.addLog('等待加载动画消失超时，继续...');
+      // 等待 token 被捕获（最多 20 秒）
+      const tokenWaitStart = Date.now();
+      while (!this.capturedToken && Date.now() - tokenWaitStart < 20000) {
+        await randomDelay(500, 500);
       }
 
+      if (this.capturedToken) {
+        this.addLog(`token 捕获成功`);
+      } else {
+        this.addLog(`等待 token 超时，将尝试其他方式获取`);
+      }
+
+      page.off('request', tokenHandler);
       editorUrl = page.url();
       this.addLog(`编辑器最终 URL: ${editorUrl}`);
       return editorUrl;
@@ -533,27 +560,21 @@ export class GoogleSitesPublisher {
     const siteSlug = `${slugBase}-${Date.now().toString(36)}`;
     this.addLog(`生成 slug: ${siteSlug}`);
 
+    // 使用已捕获的 token（从 bind 请求中获取）
+    const tokenForApi = this.capturedToken;
+    this.addLog(`使用 token: ${tokenForApi ? tokenForApi.slice(0, 30) + '...' : '未捕获到 token'}`);
+
     // 通过 page.evaluate 在浏览器上下文中直接调用 API
     // 这样可以利用浏览器的 Cookie 和会话，无需额外认证
     const publishResult = await page.evaluate(async (params: {
       docId: string;
       slug: string;
-      editorUrl: string;
+      token: string | null;
     }) => {
-      const { docId, slug, editorUrl } = params;
-
-      // 从编辑器 URL 提取 token
-      const urlObj = new URL(editorUrl);
-      let token = urlObj.searchParams.get('token');
-
-      // 如果 URL 中没有 token，尝试从当前页面 URL 获取
-      if (!token) {
-        const currentUrl = new URL(window.location.href);
-        token = currentUrl.searchParams.get('token');
-      }
+      const { docId, slug, token } = params;
 
       if (!token) {
-        return { success: false, error: '无法从 URL 获取 token，当前 URL: ' + window.location.href };
+        return { success: false, error: '未捕获到 token，请确认已配置 Google Site 编辑器地址' };
       }
 
       const baseUrl = `https://sites.google.com/u/0/d/${docId}`;
@@ -615,7 +636,7 @@ export class GoogleSitesPublisher {
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
       }
-    }, { docId: docId!, slug: siteSlug, editorUrl });
+    }, { docId: docId!, slug: siteSlug, token: tokenForApi }) as { success: boolean; slug?: string; error?: string; checkText?: string; createText?: string; publishText?: string };
 
     this.addLog(`API 发布结果: ${JSON.stringify(publishResult)}`);
 
