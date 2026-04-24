@@ -41,9 +41,11 @@ import {
   Trash2,
   User,
   XCircle,
+  LogIn,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { OAuthAuthorizationButton } from "@/components/OAuthAuthorizationButton";
 
 type Account = {
   id: number;

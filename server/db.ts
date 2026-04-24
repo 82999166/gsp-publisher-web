@@ -317,7 +317,7 @@ export async function deleteKeyword(id: number) {
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
 export async function getDashboardStats() {
   const db = await getDb();
-  if (!db) return { accountCount: 0, todayPublished: 0, materialCount: 0, indexedCount: 0, totalPublished: 0, pendingTasks: 0, indexRate: 0 };
+  if (!db) return { accountCount: 0, todayPublished: 0, materialCount: 0, indexedCount: 0, totalPublished: 0, pendingTasks: 0, indexRate: 0, oauthStatus: [] };
 
   const [accountRows] = await db.select({ count: count() }).from(accounts);
   const [materialRows] = await db.select({ count: count() }).from(materials);
@@ -335,6 +335,35 @@ export async function getDashboardStats() {
   const indexed = indexedRows?.count ?? 0;
   const indexRate = totalIndex > 0 ? Math.round((indexed / totalIndex) * 100) : 0;
 
+  // 获取 OAuth 令牌状态
+  const allAccounts = await db.select({
+    id: accounts.id,
+    name: accounts.name,
+    googleOAuthAccessToken: accounts.googleOAuthAccessToken,
+    googleOAuthExpiresAt: accounts.googleOAuthExpiresAt,
+  }).from(accounts);
+
+  const now = new Date();
+  const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  const oauthStatus = allAccounts
+    .map(acc => {
+      const hasToken = !!acc.googleOAuthAccessToken;
+      const isExpired = acc.googleOAuthExpiresAt && acc.googleOAuthExpiresAt < now;
+      const expiringWithin7Days = acc.googleOAuthExpiresAt && acc.googleOAuthExpiresAt <= sevenDaysLater && acc.googleOAuthExpiresAt > now;
+      
+      return {
+        accountId: acc.id,
+        accountName: acc.name,
+        hasToken,
+        isExpired: isExpired || false,
+        expiringWithin7Days: expiringWithin7Days || false,
+        expiresAt: acc.googleOAuthExpiresAt,
+        status: isExpired ? 'expired' : expiringWithin7Days ? 'expiring_soon' : hasToken ? 'valid' : 'not_authorized',
+      };
+    })
+    .filter(s => s.status !== 'valid'); // 只返回需要关注的账号
+
   return {
     accountCount: accountRows?.count ?? 0,
     todayPublished: todayRows?.count ?? 0,
@@ -343,6 +372,7 @@ export async function getDashboardStats() {
     totalPublished: taskRows?.count ?? 0,
     pendingTasks: pendingRows?.count ?? 0,
     indexRate,
+    oauthStatus,
   };
 }
 

@@ -11,6 +11,8 @@ import {
   Zap,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { OAuthStatusCard } from "@/components/OAuthStatusCard";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 function StatCard({
   icon: Icon,
@@ -80,6 +82,7 @@ function ActivityItem({ label, time, status }: { label: string; time: string; st
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { data: stats, isLoading } = trpc.dashboard.stats.useQuery();
+  const { user } = useAuth();
 
   const statCards = [
     {
@@ -170,6 +173,11 @@ export default function Dashboard() {
             />
           ))}
         </div>
+      )}
+
+      {/* OAuth Status Alert */}
+      {stats?.oauthStatus && stats.oauthStatus.length > 0 && (
+        <OAuthStatusCard items={stats.oauthStatus} />
       )}
 
       {/* Bottom Section */}
