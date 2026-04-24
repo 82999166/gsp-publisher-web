@@ -825,22 +825,62 @@ export class GoogleSitesPublisher {
           if (btn) (btn as HTMLElement).click();
         });
         
-        await randomDelay(1000, 2000);
+        await randomDelay(1500, 2500);
         
-        // 等待发布确认对话框
-        this.addLog('等待发布确认对话框...');
+        // 等待发布对话框（"发布到网络" 弹窗）
+        this.addLog('等待发布对话框...');
         try {
-          await page.waitForSelector('[role="dialog"], .goog-dialog', { timeout: 5000 }).catch(() => null);
-          await randomDelay(500, 1000);
+          await page.waitForSelector('[role="dialog"]', { timeout: 8000 }).catch(() => null);
+          await randomDelay(800, 1200);
           
-          // 点击确认按钮
+          // 生成随机 slug（8位随机字母数字）
+          const randomSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
+          this.addLog(`生成随机 slug: ${randomSlug}`);
+          
+          // 找到网址输入框并填写 slug
+          const inputFilled = await page.evaluate((slug: string) => {
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return false;
+            // 找对话框内的 input 或 [contenteditable] 输入框
+            const input = dialog.querySelector('input[type="text"], input:not([type]), [contenteditable="true"]') as HTMLInputElement | null;
+            if (!input) return false;
+            // 清空并填入 slug
+            input.focus();
+            // 触发 React 合成事件
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+            if (nativeInputValueSetter) {
+              nativeInputValueSetter.call(input, slug);
+            } else {
+              input.value = slug;
+            }
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }, randomSlug);
+          
+          if (inputFilled) {
+            this.addLog(`✅ 已在网址输入框填入 slug: ${randomSlug}`);
+            await randomDelay(800, 1200);
+          } else {
+            this.addLog('⚠️ 未找到网址输入框，尝试用键盘输入...');
+            // 备用：用 Tab 键聚焦到输入框再键入
+            await page.keyboard.press('Tab');
+            await randomDelay(300, 500);
+            await page.keyboard.type(randomSlug, { delay: 30 });
+            await randomDelay(500, 800);
+          }
+          
+          // 点击对话框内的发布按钮（此时 slug 已填写，按钮应已激活）
           const confirmClicked = await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return false;
+            const buttons = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+            // 优先找蓝色/主要发布按钮
             const btn = buttons.find(b => {
               const text = b.textContent?.toLowerCase() || '';
+              const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
               return text.includes('publish') || text.includes('发布') || 
-                     text.includes('confirm') || text.includes('确认') ||
-                     text.includes('ok');
+                     ariaLabel.includes('publish') || ariaLabel.includes('发布');
             });
             if (btn) {
               (btn as HTMLElement).click();
@@ -850,10 +890,12 @@ export class GoogleSitesPublisher {
           });
           
           if (confirmClicked) {
-            this.addLog('已点击发布确认按钮');
+            this.addLog('✅ 已点击发布确认按钮');
+          } else {
+            this.addLog('⚠️ 未找到对话框内的发布按钮');
           }
         } catch (e) {
-          this.addLog(`等待确认对话框超时: ${e}`);
+          this.addLog(`等待发布对话框超时: ${e}`);
         }
         
         // 等待发布完成
