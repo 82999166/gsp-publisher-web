@@ -251,3 +251,60 @@ export const generationBatches = mysqlTable("generation_batches", {
 
 export type GenerationBatch = typeof generationBatches.$inferSelect;
 export type InsertGenerationBatch = typeof generationBatches.$inferInsert;
+
+// ─── 批量生成项目表 ────────────────────────────────────────────────────────────
+export const generationItems = mysqlTable("generation_items", {
+  id: int("id").autoincrement().primaryKey(),
+  batchId: int("batchId").notNull(),
+  keyword: varchar("keyword", { length: 256 }).notNull(),
+  status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
+  generatedContent: text("generatedContent"),
+  errorMessage: text("errorMessage"),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GenerationItem = typeof generationItems.$inferSelect;
+export type InsertGenerationItem = typeof generationItems.$inferInsert;
+
+// ─── 已发布页面表 ──────────────────────────────────────────────────────────────
+export const publishedPages = mysqlTable("published_pages", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId"),
+  materialId: int("materialId"),
+  accountId: int("accountId").notNull(),
+  siteId: int("siteId"),
+  title: varchar("title", { length: 512 }).notNull(),
+  keyword: varchar("keyword", { length: 256 }),
+  publishedUrl: varchar("publishedUrl", { length: 1024 }).notNull(),
+  siteUrl: varchar("siteUrl", { length: 1024 }),
+  language: mysqlEnum("language", ["zh-CN", "en", "zh-TW"]).default("zh-CN").notNull(),
+  wordCount: int("wordCount"),
+  qualityScore: float("qualityScore"),
+  indexStatus: mysqlEnum("indexStatus", ["unknown", "indexed", "not_indexed", "pending", "submitted"]).default("pending").notNull(),
+  gscSubmitted: tinyint("gscSubmitted").default(0),
+  gscSubmittedAt: timestamp("gscSubmittedAt"),
+  gscResponse: text("gscResponse"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PublishedPage = typeof publishedPages.$inferSelect;
+export type InsertPublishedPage = typeof publishedPages.$inferInsert;
+
+// ─── 系统日志表 ────────────────────────────────────────────────────────────────
+export const systemLogs = mysqlTable("system_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  level: mysqlEnum("level", ["debug", "info", "warn", "error", "success"]).default("info").notNull(),
+  category: varchar("category", { length: 64 }).notNull(),
+  title: varchar("title", { length: 256 }).notNull(),
+  message: text("message"),
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SystemLog = typeof systemLogs.$inferSelect;
+export type InsertSystemLog = typeof systemLogs.$inferInsert;

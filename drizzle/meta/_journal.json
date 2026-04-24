@@ -71,6 +71,13 @@
       "when": 1777020889195,
       "tag": "0009_short_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1777021353267,
+      "tag": "0010_goofy_doctor_strange",
+      "breakpoints": true
     }
   ]
 }
