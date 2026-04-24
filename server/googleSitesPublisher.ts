@@ -375,9 +375,18 @@ export class GoogleSitesPublisher {
     page.on('request', tokenHandler);
 
     if (options.siteUrl) {
-      // 已有 Site，直接导航到编辑器
-      this.addLog(`导航到已有 Site: ${options.siteUrl}`);
-      await page.goto(options.siteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      // 已有 Site，从 siteUrl 中提取 Site ID，构建根编辑器 URL
+      // 支持格式: /d/[siteId]/edit 或 /d/[siteId]/p/[pageId]/edit
+      const siteIdMatch = options.siteUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      let targetUrl = options.siteUrl;
+      if (siteIdMatch) {
+        // 始终导航到 Site 根编辑器（而不是具体子页面），避免子页面 URL 失效
+        targetUrl = `https://sites.google.com/d/${siteIdMatch[1]}/edit`;
+        this.addLog(`提取 Site ID: ${siteIdMatch[1]}，导航到根编辑器: ${targetUrl}`);
+      } else {
+        this.addLog(`导航到已有 Site: ${targetUrl}`);
+      }
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
       // 等待编辑器完全加载（URL 应包含 /d/ 表示是编辑器页面）
       let editorUrl = page.url();
@@ -389,58 +398,40 @@ export class GoogleSitesPublisher {
         throw new Error('导航到 Site 时被重定向到登录页，Cookie 可能已失效');
       }
 
-      // 检查是否被重定向到公开视图（/view/），如果是则尝试进入编辑器
-      if (editorUrl.includes('/view/') && !editorUrl.includes('/edit')) {
-        this.addLog(`⚠️ 被重定向到公开视图，尝试进入编辑器...`);
-        
-        // 尝试方法 1: 点击编辑按钮
+      // 如果被重定向到 Sites 首页（而非编辑器），尝试从首页进入编辑器
+      const isHomePage = !editorUrl.includes('/d/') && 
+        (editorUrl === 'https://sites.google.com/' || 
+         editorUrl.startsWith('https://sites.google.com/?') ||
+         editorUrl === 'https://sites.google.com');
+      if (isHomePage) {
+        this.addLog(`⚠️ 被重定向到 Sites 首页，尝试从首页进入编辑器...`);
         try {
-          // 等待页面完全加载
-          await randomDelay(1000, 2000);
-          
-          // 查找编辑按钮（可能的选择器）
-          const editButtonSelectors = [
-            'button[aria-label="编辑"]',
-            'button[aria-label="Edit"]',
-            'button[title="编辑"]',
-            'button[title="Edit"]',
-            '[data-tooltip="编辑"]',
-            '[data-tooltip="Edit"]',
-            'a[href*="/edit"]',
-            'button:has-text("编辑")',
-            'button:has-text("Edit")',
-          ];
-          
-          let editButtonFound = false;
-          for (const selector of editButtonSelectors) {
-            try {
-              const button = await page.$(selector);
-              if (button) {
-                this.addLog(`✅ 找到编辑按钮，点击进入编辑器...`);
-                await page.evaluate((el) => (el as HTMLElement).click(), button);
-                await randomDelay(2000, 3000);
-                editorUrl = page.url();
-                this.addLog(`点击编辑后 URL: ${editorUrl}`);
-                editButtonFound = true;
-                break;
-              }
-            } catch {}
-          }
-          
-          if (!editButtonFound) {
-            this.addLog(`⚠️ 未找到编辑按钮，尝试直接修改 URL...`);
-            // 方法 2: 直接修改 URL，从 /view/ 改为 /edit
-            const editUrl = editorUrl.replace('/view/', '/d/').replace(/\/$/, '/edit');
-            if (editUrl !== editorUrl) {
-              this.addLog(`尝试导航到编辑 URL: ${editUrl}`);
-              await page.goto(editUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-              await randomDelay(2000, 3000);
-              editorUrl = page.url();
-              this.addLog(`修改 URL 后: ${editorUrl}`);
-            }
+          await randomDelay(2000, 3000);
+          // 从首页查找包含 /d/.../edit 的编辑器链接
+          const siteLinks = await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('a[href*="/d/"]'));
+            return links
+              .map(a => (a as HTMLAnchorElement).href)
+              .filter(h => h.includes('/d/') && h.includes('/edit'));
+          });
+          this.addLog(`首页找到编辑器链接: ${JSON.stringify(siteLinks.slice(0, 3))}`);
+          if (siteLinks.length > 0) {
+            // 优先找匹配 siteId 的链接，否则用第一个
+            const matchedLink = siteIdMatch
+              ? siteLinks.find(l => l.includes(siteIdMatch[1])) || siteLinks[0]
+              : siteLinks[0];
+            this.addLog(`导航到编辑器: ${matchedLink}`);
+            await page.goto(matchedLink, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await randomDelay(2000, 3000);
+            editorUrl = page.url();
+            this.addLog(`进入编辑器后 URL: ${editorUrl}`);
+          } else {
+            this.addLog(`⚠️ 首页未找到编辑器链接，输出页面 DOM 供调试`);
+            const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 500) || '');
+            this.addLog(`页面内容: ${bodyText}`);
           }
         } catch (err) {
-          this.addLog(`⚠️ 进入编辑器失败: ${err}`);
+          this.addLog(`⚠️ 从首页进入编辑器失败: ${err}`);
         }
       }
 
