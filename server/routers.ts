@@ -202,7 +202,7 @@ const accountsRouter = router({
   // Google OAuth 授权 URL 生成
   getGoogleOAuthUrl: protectedProcedure.input(z.object({ 
     accountId: z.number() 
-  })).query(async ({ input }) => {
+  })).mutation(async ({ input }) => {
     try {
       const oauthHandler = createGoogleOAuthHandler();
       const state = JSON.stringify({ accountId: input.accountId, timestamp: Date.now() });
@@ -1657,7 +1657,7 @@ const publishedPagesRouter = router({
   create: protectedProcedure.input(z.object({
     taskId: z.number().optional(),
     materialId: z.number().optional(),
-    accountId: z.number(),
+    accountId: z.number().optional(),
     siteId: z.number().optional(),
     title: z.string().min(1),
     keyword: z.string().optional(),

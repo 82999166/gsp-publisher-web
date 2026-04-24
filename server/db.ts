@@ -358,8 +358,8 @@ export async function getDashboardStats() {
         hasToken,
         isExpired: isExpired || false,
         expiringWithin7Days: expiringWithin7Days || false,
-        expiresAt: acc.googleOAuthExpiresAt,
-        status: isExpired ? 'expired' : expiringWithin7Days ? 'expiring_soon' : hasToken ? 'valid' : 'not_authorized',
+        expiresAt: acc.googleOAuthExpiresAt ?? undefined,
+        status: (isExpired ? 'expired' : expiringWithin7Days ? 'expiring_soon' : hasToken ? 'valid' : 'not_authorized') as 'expired' | 'expiring_soon' | 'valid' | 'not_authorized',
       };
     })
     .filter(s => s.status !== 'valid'); // 只返回需要关注的账号
@@ -666,7 +666,7 @@ export async function getPublishedPages(opts?: {
   if (opts?.siteId) conditions.push(eq(publishedPages.siteId, opts.siteId));
   if (conditions.length > 0) q = (q as any).where(and(...conditions));
   return (q as any)
-    .orderBy(desc(publishedPages.publishedAt))
+    .orderBy(desc(publishedPages.createdAt))
     .limit(opts?.limit ?? 100)
     .offset(opts?.offset ?? 0);
 }
@@ -736,7 +736,6 @@ export async function createLog(data: {
       message: data.message,
       entityType: data.entityType,
       entityId: data.entityId,
-      duration: data.duration,
     });
   } catch (e) {
     // 日志写入失败不影响主流程

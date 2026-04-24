@@ -77,7 +77,7 @@ class OAuthService {
     const { data } = await this.client.post<GetUserInfoResponse>(
       GET_USER_INFO_PATH,
       {
-        accessToken: token.accessToken,
+        accessToken: tokenResponse.accessToken,
       }
     );
 

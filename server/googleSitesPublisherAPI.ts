@@ -169,7 +169,7 @@ export class GoogleSitesPublisherAPI {
 
       return {
         success: true,
-        pageId: response.data.id,
+        pageId: response.data.id ?? undefined,
       };
     } catch (error) {
       return {
@@ -222,7 +222,7 @@ export class GoogleSitesPublisherAPI {
 
       return {
         accessToken: tokens.access_token!,
-        refreshToken: tokens.refresh_token,
+        refreshToken: tokens.refresh_token ?? undefined,
         expiresAt: tokens.expiry_date
           ? new Date(tokens.expiry_date)
           : undefined,

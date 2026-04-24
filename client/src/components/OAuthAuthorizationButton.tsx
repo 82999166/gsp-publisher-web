@@ -32,7 +32,7 @@ export function OAuthAuthorizationButton({
       setIsLoading(true);
       const result = await getOAuthUrlMutation.mutateAsync({ accountId });
       
-      if (result.url) {
+      if (result.authUrl) {
         // 在新窗口打开授权页面
         const width = 500;
         const height = 600;
@@ -40,7 +40,7 @@ export function OAuthAuthorizationButton({
         const top = window.screenY + (window.outerHeight - height) / 2;
         
         const authWindow = window.open(
-          result.url,
+          result.authUrl,
           `oauth-${accountId}`,
           `width=${width},height=${height},left=${left},top=${top}`
         );

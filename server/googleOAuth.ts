@@ -64,7 +64,7 @@ export class GoogleOAuthHandler {
 
       return {
         accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
+        refreshToken: tokens.refresh_token ?? undefined,
         expiresAt: tokens.expiry_date
           ? new Date(tokens.expiry_date)
           : undefined,
@@ -94,7 +94,7 @@ export class GoogleOAuthHandler {
 
       return {
         accessToken: credentials.access_token,
-        refreshToken: credentials.refresh_token,
+        refreshToken: credentials.refresh_token ?? undefined,
         expiresAt: credentials.expiry_date
           ? new Date(credentials.expiry_date)
           : undefined,
@@ -136,7 +136,7 @@ export class GoogleOAuthHandler {
       return {
         email: response.data.email || "",
         name: response.data.name || "",
-        picture: response.data.picture,
+        picture: response.data.picture ?? undefined,
       };
     } catch (error) {
       throw new Error(`获取用户信息失败: ${error}`);
