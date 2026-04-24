@@ -241,14 +241,17 @@ export class GoogleSitesPublisher {
         }
         // 兼容 Chrome 扩展导出格式（expirationDate）和标准格式（expires）
         const expiresTs = cookie.expires ?? (cookie as any).expirationDate;
-        // sameSite 字段兼容：Chrome 导出的是小写（"unspecified"），Puppeteer 需要首字母大写
+        // sameSite 字段兼容：Chrome 导出格式映射到 Puppeteer 支持的值
+        // Chrome 导出值: "unspecified", "no_restriction", "lax", "strict"
+        // Puppeteer 支持值: "Strict", "Lax", "None"
         const rawSameSite = (cookie as any).sameSite as string | undefined;
         let sameSite: "Strict" | "Lax" | "None" | undefined;
         if (rawSameSite) {
-          const normalized = rawSameSite.charAt(0).toUpperCase() + rawSameSite.slice(1).toLowerCase();
-          if (normalized === "Strict" || normalized === "Lax" || normalized === "None") {
-            sameSite = normalized;
-          }
+          const lower = rawSameSite.toLowerCase();
+          if (lower === 'strict') sameSite = 'Strict';
+          else if (lower === 'lax') sameSite = 'Lax';
+          else if (lower === 'none' || lower === 'no_restriction') sameSite = 'None';
+          // 'unspecified' → undefined（不设置 sameSite，让浏览器使用默认值）
         }
         await page.setCookie({
           name: cookie.name,

@@ -241,10 +241,15 @@ export const generationBatches = mysqlTable("generation_batches", {
   minWords: int("minWords").default(800).notNull(),
   style: mysqlEnum("style", ["informational", "commercial", "navigational"]).default("informational").notNull(),
   concurrency: int("concurrency").default(3).notNull(),
+  // 自动审批阈值（质量分达到该阈值自动审批）
+  autoApproveThreshold: int("autoApproveThreshold").default(0).notNull(),
   // 指定插入内容（全局配置）
   insertKeywords: json("insertKeywords"),   // string[]
   anchorLinks: json("anchorLinks"),         // {anchorText, url, position}[]
   insertParagraph: text("insertParagraph"), // 要插入的段落文本
+  // 时间戳
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -257,8 +262,13 @@ export const generationItems = mysqlTable("generation_items", {
   id: int("id").autoincrement().primaryKey(),
   batchId: int("batchId").notNull(),
   keyword: varchar("keyword", { length: 256 }).notNull(),
+  title: varchar("title", { length: 512 }),          // 指定的标题（可空，空则 AI 自动生成）
   status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
   generatedContent: text("generatedContent"),
+  generatedTitle: varchar("generatedTitle", { length: 512 }), // AI 实际生成的标题
+  wordCount: int("wordCount"),                        // 实际字数
+  qualityScore: int("qualityScore"),                  // AI 质量评分 0-100
+  retryCount: int("retryCount").default(0).notNull(), // 重试次数
   errorMessage: text("errorMessage"),
   startedAt: timestamp("startedAt"),
   completedAt: timestamp("completedAt"),
