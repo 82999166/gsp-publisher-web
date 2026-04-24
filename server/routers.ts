@@ -1657,7 +1657,7 @@ const publishedPagesRouter = router({
   create: protectedProcedure.input(z.object({
     taskId: z.number().optional(),
     materialId: z.number().optional(),
-    accountId: z.number().optional(),
+    accountId: z.number(),
     siteId: z.number().optional(),
     title: z.string().min(1),
     keyword: z.string().optional(),
@@ -1667,7 +1667,7 @@ const publishedPagesRouter = router({
     wordCount: z.number().optional(),
     qualityScore: z.number().optional(),
   })).mutation(async ({ input }) => {
-    await createPublishedPage(input);
+    await createPublishedPage(input as any);
     return { success: true };
   }),
   update: protectedProcedure.input(z.object({

@@ -100,9 +100,13 @@ export interface CookieEntry {
   domain?: string;
   path?: string;
   expires?: number;
+  expirationDate?: number; // Chrome 扩展导出格式（与 expires 互为别名）
   httpOnly?: boolean;
   secure?: boolean;
   sameSite?: "Strict" | "Lax" | "None";
+  session?: boolean; // Chrome 扩展导出格式
+  storeId?: string; // Chrome 扩展导出格式
+  hostOnly?: boolean; // Chrome 扩展导出格式
 }
 
 export interface PublishResult {
@@ -235,15 +239,26 @@ export class GoogleSitesPublisher {
         if (!domain.startsWith('.') && !domain.startsWith('http')) {
           domain = '.' + domain;
         }
+        // 兼容 Chrome 扩展导出格式（expirationDate）和标准格式（expires）
+        const expiresTs = cookie.expires ?? (cookie as any).expirationDate;
+        // sameSite 字段兼容：Chrome 导出的是小写（"unspecified"），Puppeteer 需要首字母大写
+        const rawSameSite = (cookie as any).sameSite as string | undefined;
+        let sameSite: "Strict" | "Lax" | "None" | undefined;
+        if (rawSameSite) {
+          const normalized = rawSameSite.charAt(0).toUpperCase() + rawSameSite.slice(1).toLowerCase();
+          if (normalized === "Strict" || normalized === "Lax" || normalized === "None") {
+            sameSite = normalized;
+          }
+        }
         await page.setCookie({
           name: cookie.name,
           value: cookie.value,
           domain,
           path: cookie.path || "/",
-          expires: cookie.expires,
+          ...(expiresTs !== undefined ? { expires: Math.floor(expiresTs) } : {}),
           httpOnly: cookie.httpOnly,
           secure: cookie.secure,
-          sameSite: cookie.sameSite,
+          ...(sameSite ? { sameSite } : {}),
         });
       } catch (e) {
         // 忽略单条 Cookie 设置失败
