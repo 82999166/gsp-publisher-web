@@ -37,6 +37,7 @@ export const accounts = mysqlTable("accounts", {
   cookieParsed: json("cookieParsed"),
   status: mysqlEnum("status", ["online", "expired", "pending", "error"]).default("pending").notNull(),
   lastVerifiedAt: timestamp("lastVerifiedAt"),
+  cookieExpiresAt: timestamp("cookieExpiresAt"), // Cookie 过期时间
   dailyLimit: int("dailyLimit").default(5).notNull(),
   todayPublished: int("todayPublished").default(0).notNull(),
   siteAge: mysqlEnum("siteAge", ["new_site", "growing", "mature"]).default("new_site").notNull(),
@@ -45,6 +46,11 @@ export const accounts = mysqlTable("accounts", {
   defaultSiteName: varchar("defaultSiteName", { length: 256 }), // 默认 Site 名称
   proxyConfig: json("proxyConfig"),  // 该账号专属代理配置 {host, port, username, password, protocol}
   browserFingerprint: json("browserFingerprint"), // 该账号专属浏览器指纹 {userAgent, screenWidth, screenHeight, timezone, language, platform, colorDepth, hardwareConcurrency, deviceMemory}
+  // Google OAuth 令牌
+  googleOAuthAccessToken: text("googleOAuthAccessToken"), // Google OAuth 访问令牌
+  googleOAuthRefreshToken: text("googleOAuthRefreshToken"), // Google OAuth 刷新令牌
+  googleOAuthExpiresAt: timestamp("googleOAuthExpiresAt"), // OAuth 令牌过期时间
+  googleOAuthScope: text("googleOAuthScope"), // OAuth 授权范围
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -139,7 +145,8 @@ export const publishTasks = mysqlTable("publish_tasks", {
   retryCount: int("retryCount").default(0),
   maxRetries: int("maxRetries").default(3),
   // 发布引擎日志
-  engineLog: text("engineLog"),                      // Puppeteer 执行日志
+  engineLog: text("engineLog"),                      // 发布引擎执行日志
+  publishMethod: mysqlEnum("publishMethod", ["browser_automation", "google_sites_api"]).default("google_sites_api").notNull(), // 发布方式
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -237,91 +244,10 @@ export const generationBatches = mysqlTable("generation_batches", {
   // 指定插入内容（全局配置）
   insertKeywords: json("insertKeywords"),   // string[]
   anchorLinks: json("anchorLinks"),         // {anchorText, url, position}[]
-  insertParagraph: text("insertParagraph"),
-  // 自动通过阈值（0=不自动通过）
-  autoApproveThreshold: int("autoApproveThreshold").default(0),
-  // 生成后自动加入发布队列
-  autoQueue: boolean("autoQueue").default(false),
-  // 时间
-  startedAt: timestamp("startedAt"),
-  completedAt: timestamp("completedAt"),
+  insertParagraph: text("insertParagraph"), // 要插入的段落文本
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
 export type GenerationBatch = typeof generationBatches.$inferSelect;
 export type InsertGenerationBatch = typeof generationBatches.$inferInsert;
-
-// ─── 批量生成条目表 ────────────────────────────────────────────────────────────
-export const generationItems = mysqlTable("generation_items", {
-  id: int("id").autoincrement().primaryKey(),
-  batchId: int("batchId").notNull(),
-  keyword: varchar("keyword", { length: 512 }).notNull(),
-  title: varchar("title", { length: 512 }),  // 可选：指定标题
-  status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
-  retryCount: int("retryCount").default(0),
-  // 生成结果
-  materialId: int("materialId"),
-  generatedTitle: varchar("generatedTitle", { length: 512 }),
-  wordCount: int("wordCount"),
-  qualityScore: float("qualityScore"),
-  errorMessage: text("errorMessage"),
-  // 时间
-  startedAt: timestamp("startedAt"),
-  completedAt: timestamp("completedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-export type GenerationItem = typeof generationItems.$inferSelect;
-export type InsertGenerationItem = typeof generationItems.$inferInsert;
-
-// ─── 已发布页面记录表 ────────────────────────────────────────────────────────────
-export const publishedPages = mysqlTable("published_pages", {
-  id: int("id").autoincrement().primaryKey(),
-  // 关联信息
-  taskId: int("taskId"),           // 关联发布任务
-  materialId: int("materialId"),   // 关联素材
-  accountId: int("accountId"),     // 关联账号
-  siteId: int("siteId"),           // 关联 Google Site
-  // 页面信息
-  title: varchar("title", { length: 512 }).notNull(),
-  keyword: varchar("keyword", { length: 512 }),
-  publishedUrl: varchar("publishedUrl", { length: 1024 }).notNull(),  // 已发布的页面 URL
-  siteUrl: varchar("siteUrl", { length: 512 }),                        // Google Site 根 URL
-  language: varchar("language", { length: 20 }).default("zh-CN"),
-  wordCount: int("wordCount"),
-  qualityScore: float("qualityScore"),
-  // 收录状态
-  indexStatus: mysqlEnum("indexStatus", ["unknown", "indexed", "not_indexed", "pending"]).default("unknown"),
-  indexCheckedAt: timestamp("indexCheckedAt"),
-  // GSC 提交状态
-  gscSubmitted: tinyint("gscSubmitted").default(0),
-  gscSubmittedAt: timestamp("gscSubmittedAt"),
-  gscResponse: text("gscResponse"),
-  // 时间
-  publishedAt: timestamp("publishedAt").defaultNow().notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-export type PublishedPage = typeof publishedPages.$inferSelect;
-export type InsertPublishedPage = typeof publishedPages.$inferInsert;
-
-// ─── System Logs ───────────────────────────────────────────────────────────────
-export const systemLogs = mysqlTable("system_logs", {
-  id: int("id").autoincrement().primaryKey(),
-  // 日志级别: info | warn | error | success
-  level: varchar("level", { length: 20 }).notNull().default("info"),
-  // 操作类型: publish | generate | review | cookie | account | system
-  category: varchar("category", { length: 50 }).notNull().default("system"),
-  // 操作标题（简短描述）
-  title: varchar("title", { length: 200 }).notNull(),
-  // 详细日志内容
-  message: text("message"),
-  // 关联实体（如 taskId、materialId 等）
-  entityType: varchar("entityType", { length: 50 }),
-  entityId: int("entityId"),
-  // 操作耗时（毫秒）
-  duration: int("duration"),
-  // 创建时间
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-export type SystemLog = typeof systemLogs.$inferSelect;
-export type InsertSystemLog = typeof systemLogs.$inferInsert;

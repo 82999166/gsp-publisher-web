@@ -22,11 +22,36 @@ import {
   getPublishTaskById,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
+import { createGoogleOAuthHandler } from "./googleOAuth";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
 import axios from "axios";
-import { HttpsProxyAgent } from "https-proxy-agent";
-import { SocksProxyAgent } from "socks-proxy-agent";
+
+// 动态导入代理 agent
+let HttpsProxyAgent: any = null;
+let SocksProxyAgent: any = null;
+
+async function loadProxyAgents() {
+  if (!HttpsProxyAgent) {
+    try {
+      const httpsModule = await import("https-proxy-agent");
+      HttpsProxyAgent = httpsModule.HttpsProxyAgent;
+    } catch (e) {
+      console.warn("https-proxy-agent 未安装");
+    }
+  }
+  if (!SocksProxyAgent) {
+    try {
+      const socksModule = await import("socks-proxy-agent");
+      SocksProxyAgent = socksModule.SocksProxyAgent;
+    } catch (e) {
+      console.warn("socks-proxy-agent 未安装");
+    }
+  }
+}
+// 代理 agent 动态导入（运行时按需加载）
+// import { HttpsProxyAgent } from "https-proxy-agent";
+// import { SocksProxyAgent } from "socks-proxy-agent";
 
 // ─── AI Config Helper ─────────────────────────────────────────────────────────
 // Reads AI provider/key/model/url from DB settings, used for all invokeLLM calls
@@ -39,7 +64,13 @@ async function getAiConfig() {
   if (!apiKey) {
     throw new Error("请先在「系统设置 > AI 配置」中填写 API Key！Groq 免费 Key 可在 https://console.groq.com 获取");
   }
-  const model = obj["ai_model"] ?? "llama-3.3-70b-versatile";
+  let model = obj["ai_model"] ?? "llama-3.3-70b-versatile";
+  // Check if model is deprecated and use fallback
+  const deprecatedModels = ["llama3-70b-8192", "mixtral-8x7b-32768", "llama3-8b-8192"];
+  if (deprecatedModels.includes(model)) {
+    console.warn(`Model ${model} is deprecated, using llama-3.3-70b-versatile instead`);
+    model = "llama-3.3-70b-versatile";
+  }
   // Determine base URL from provider if not explicitly set
   let apiUrl = obj["ai_base_url"] ?? "";
   if (!apiUrl) {
@@ -145,17 +176,136 @@ const accountsRouter = router({
     return { success: true };
   }),
   verify: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    // Simulate cookie verification (real implementation would use Playwright)
     const account = await getAccountById(input.id);
     if (!account) throw new Error("账号不存在");
-    // Mock verification - in production this would launch Playwright
-    const isValid = account.cookieRaw.length > 50;
+    
+    // Check if cookie is valid: must have content and not be expired
+    const isValidCookie = account.cookieRaw && account.cookieRaw.length > 50;
+    const isNotExpired = !account.cookieExpiresAt || account.cookieExpiresAt > new Date();
+    const isValid = isValidCookie && isNotExpired;
+    
+    // Set cookie expiration to 60 days from now (Google Sites cookies typically last 60-90 days)
+    const cookieExpiresAt = new Date();
+    cookieExpiresAt.setDate(cookieExpiresAt.getDate() + 60);
+    
     await updateAccount(input.id, {
       status: isValid ? "online" : "expired",
       lastVerifiedAt: new Date(),
+      cookieExpiresAt: isValid ? cookieExpiresAt : account.cookieExpiresAt,
     });
-    await createLog({ level: isValid ? "success" : "warn", category: "account", title: `验证账号：${account.name}`, message: `验证结果：${isValid ? "有效" : "已过期"}`, entityType: "account", entityId: input.id });
+    
+    const expiryMsg = isValid ? `有效（有效期至 ${cookieExpiresAt.toLocaleString('zh-CN')})` : "已过期";
+    await createLog({ level: isValid ? "success" : "warn", category: "account", title: `验证账号：${account.name}`, message: `验证结果：${expiryMsg}`, entityType: "account", entityId: input.id });
     return { success: true, status: isValid ? "online" : "expired" };
+  }),
+  
+  // Google OAuth 授权 URL 生成
+  getGoogleOAuthUrl: protectedProcedure.input(z.object({ 
+    accountId: z.number() 
+  })).query(async ({ input }) => {
+    try {
+      const oauthHandler = createGoogleOAuthHandler();
+      const state = JSON.stringify({ accountId: input.accountId, timestamp: Date.now() });
+      const authUrl = oauthHandler.getAuthorizationUrl(Buffer.from(state).toString('base64'));
+      return { success: true, authUrl };
+    } catch (error) {
+      throw new Error(`生成 OAuth URL 失败: ${error}`);
+    }
+  }),
+  
+  // Google OAuth 回调处理
+  handleGoogleOAuthCallback: protectedProcedure.input(z.object({
+    code: z.string(),
+    state: z.string(),
+  })).mutation(async ({ input }) => {
+    try {
+      const oauthHandler = createGoogleOAuthHandler();
+      const stateData = JSON.parse(Buffer.from(input.state, 'base64').toString());
+      const accountId = stateData.accountId;
+      
+      if (!accountId) {
+        throw new Error("无效的 state 参数");
+      }
+      
+      // 交换授权码获取 token
+      const tokenInfo = await oauthHandler.exchangeCodeForToken(input.code);
+      
+      // 更新账号的 OAuth 令牌
+      await updateAccount(accountId, {
+        googleOAuthAccessToken: tokenInfo.accessToken,
+        googleOAuthRefreshToken: tokenInfo.refreshToken,
+        googleOAuthExpiresAt: tokenInfo.expiresAt,
+        googleOAuthScope: tokenInfo.scope,
+      });
+      
+      await createLog({ 
+        level: "success", 
+        category: "account", 
+        title: `账号 #${accountId} 授权 Google OAuth`, 
+        message: `成功获取 Google OAuth 令牌，有效期至 ${tokenInfo.expiresAt?.toLocaleString('zh-CN') || '未知'}`,
+        entityType: "account", 
+        entityId: accountId 
+      });
+      
+      return { success: true, accountId };
+    } catch (error) {
+      throw new Error(`处理 OAuth 回调失败: ${error}`);
+    }
+  }),
+  
+  // 检查账号是否有有效的 Google OAuth 令牌
+  checkGoogleOAuthStatus: protectedProcedure.input(z.object({ 
+    id: z.number() 
+  })).query(async ({ input }) => {
+    const account = await getAccountById(input.id);
+    if (!account) throw new Error("账号不存在");
+    
+    const hasToken = !!account.googleOAuthAccessToken;
+    const isExpired = account.googleOAuthExpiresAt && account.googleOAuthExpiresAt < new Date();
+    const isValid = hasToken && !isExpired;
+    
+    return {
+      hasToken,
+      isExpired: isExpired || false,
+      isValid,
+      expiresAt: account.googleOAuthExpiresAt,
+    };
+  }),
+  
+  // 撤销 Google OAuth 授权
+  revokeGoogleOAuth: protectedProcedure.input(z.object({ 
+    id: z.number() 
+  })).mutation(async ({ input }) => {
+    const account = await getAccountById(input.id);
+    if (!account) throw new Error("账号不存在");
+    
+    if (account.googleOAuthAccessToken) {
+      try {
+        const oauthHandler = createGoogleOAuthHandler();
+        await oauthHandler.revokeAccessToken(account.googleOAuthAccessToken);
+      } catch (error) {
+        console.warn(`撤销 OAuth 令牌失败: ${error}`);
+      }
+    }
+    
+    // 清除 OAuth 令牌
+    await updateAccount(input.id, {
+      googleOAuthAccessToken: null as any,
+      googleOAuthRefreshToken: null as any,
+      googleOAuthExpiresAt: null as any,
+      googleOAuthScope: null as any,
+    });
+    
+    await createLog({ 
+      level: "info", 
+      category: "account", 
+      title: `账号 #${input.id} 撤销 Google OAuth`, 
+      message: `已撤销 Google OAuth 授权`,
+      entityType: "account", 
+      entityId: input.id 
+    });
+    
+    return { success: true };
   }),
 });
 
@@ -512,6 +662,17 @@ const tasksRouter = router({
     materialId: z.number().optional(),
     scheduledAt: z.string().optional(),
   })).mutation(async ({ input }) => {
+    // Check if account cookie is still valid before creating publish task
+    const account = await getAccountById(input.accountId);
+    if (!account) throw new Error("账号不存在");
+    
+    // Verify cookie is not expired
+    const isCookieExpired = account.cookieExpiresAt && account.cookieExpiresAt < new Date();
+    if (isCookieExpired || account.status === "expired") {
+      const expiryDate = account.cookieExpiresAt?.toLocaleString('zh-CN') || '未知';
+      throw new Error(`账号 Cookie 已过期，请重新验证账号。有效期至：${expiryDate}`);
+    }
+    
     await createPublishTask({
       name: input.name,
       accountId: input.accountId,
@@ -519,7 +680,8 @@ const tasksRouter = router({
       status: input.scheduledAt ? "scheduled" : "pending",
       scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
     });
-    await createLog({ level: "info", category: "publish", title: `创建发布任务：${input.name}`, message: `账号 #${input.accountId}${input.scheduledAt ? `\n计划时间：${input.scheduledAt}` : ""}` });
+    await createLog({ level: "info", category: "publish", title: `创建发布任务：${input.name}`, message: `账号 #${input.accountId}${input.scheduledAt ? `
+计划时间：${input.scheduledAt}` : ""}` });
     return { success: true };
   }),
 
@@ -705,7 +867,7 @@ const settingsRouter = router({
       timezone: obj["timezone"] ?? "Asia/Shanghai",
       aiProvider: obj["ai_engine"] ?? "groq",
       groqApiKey: obj["ai_api_key"] ?? "",
-      aiModel: obj["ai_model"] ?? "llama3-70b-8192",
+      aiModel: obj["ai_model"] ?? "llama-3.3-70b-versatile",
       aiBaseUrl: obj["ai_base_url"] ?? "",
       aiTemperature: parseFloat(obj["ai_temperature"] ?? "0.7"),
       aiMaxTokens: parseInt(obj["ai_max_tokens"] ?? "4096"),
@@ -1143,6 +1305,9 @@ const publisherRouter = router({
     const { host, port, protocol = "http", username, password } = input;
     const startTime = Date.now();
     try {
+      // 加载代理 agent
+      await loadProxyAgents();
+      
       // 构建代理 URL（含认证信息）
       const auth = username && password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
       const proxyUrl = `${protocol}://${auth}${host}:${port}`;
@@ -1150,8 +1315,10 @@ const publisherRouter = router({
       // 根据协议选择 agent
       let agent: any;
       if (protocol.startsWith("socks")) {
+        if (!SocksProxyAgent) throw new Error("socks-proxy-agent 未安装");
         agent = new SocksProxyAgent(proxyUrl);
       } else {
+        if (!HttpsProxyAgent) throw new Error("https-proxy-agent 未安装");
         agent = new HttpsProxyAgent(proxyUrl);
       }
 

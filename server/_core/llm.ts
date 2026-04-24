@@ -284,7 +284,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   const apiKey = resolveApiKey(params.apiKey);
   const apiUrl = resolveApiUrl(params.apiUrl);
   // Model priority: param > default (groq llama3-70b)
-  const modelName = params.model || "llama3-70b-8192";
+  const modelName = params.model || "llama-3.3-70b-versatile";
 
   const {
     messages,

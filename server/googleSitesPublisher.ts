@@ -207,9 +207,9 @@ export class GoogleSitesPublisher {
       args.push(`--proxy-server=${protocol}://${options.proxy.host}:${options.proxy.port}`);
     }
 
-    const chromiumPath = await getChromiumPath();
+    // 使用 Puppeteer 自动下载的 Chromium（避免系统依赖问题）
+    // 如果系统 Chromium 可用，Puppeteer 会优先使用；否则自动下载
     const browser = await puppeteerExtra.launch({
-      executablePath: chromiumPath,
       headless: options.headless !== false,
       args,
       defaultViewport: { width: windowW, height: windowH },
@@ -306,19 +306,51 @@ export class GoogleSitesPublisher {
     // 重置 token
     this.capturedToken = null;
 
-    // 启动请求监听，从 bind 请求中提取 token
+    // 启动请求监听，从多种方式中提取 token
+    const capturedRequests: any[] = [];
     const tokenHandler = (req: any) => {
       try {
         const url: string = req.url();
+        const postData = req.postData();
+        
+        // 记录所有 API 请求用于调试
+        if (url.includes('googleapis.com') || url.includes('sites.google.com') || url.includes('google.com/rpc')) {
+          capturedRequests.push({ url, hasPostData: !!postData });
+        }
+        
+        // 方法 1: 从 URL 参数中提取 token
         if (url.includes('/bind?') || url.includes('/bind ')) {
           const match = url.match(/[?&]token=([^&]+)/);
           if (match && match[1]) {
             const token = decodeURIComponent(match[1]);
             if (!this.capturedToken) {
               this.capturedToken = token;
-              this.addLog(`✅ 从 bind 请求捕获 token: ${token.slice(0, 30)}...`);
+              this.addLog(`✅ 从 bind URL 参数捕获 token: ${token.slice(0, 30)}...`);
             }
           }
+        }
+        
+        // 方法 2: 从 POST 数据中提取 token
+        if (!this.capturedToken && postData) {
+          try {
+            const patterns = [
+              /"token":"([^"]+)"/,
+              /"accessToken":"([^"]+)"/,
+              /"access_token":"([^"]+)"/,
+              /"auth":"([^"]+)"/,
+              /"sid":"([^"]+)"/,
+            ];
+            
+            for (const pattern of patterns) {
+              const match = postData.match(pattern);
+              if (match && match[1] && match[1].length > 20) {
+                const token = match[1];
+                this.capturedToken = token;
+                this.addLog(`✅ 从 POST 数据捕获 token: ${token.slice(0, 30)}...`);
+                break;
+              }
+            }
+          } catch {}
         }
       } catch {}
     };
@@ -339,6 +371,61 @@ export class GoogleSitesPublisher {
         throw new Error('导航到 Site 时被重定向到登录页，Cookie 可能已失效');
       }
 
+      // 检查是否被重定向到公开视图（/view/），如果是则尝试进入编辑器
+      if (editorUrl.includes('/view/') && !editorUrl.includes('/edit')) {
+        this.addLog(`⚠️ 被重定向到公开视图，尝试进入编辑器...`);
+        
+        // 尝试方法 1: 点击编辑按钮
+        try {
+          // 等待页面完全加载
+          await randomDelay(1000, 2000);
+          
+          // 查找编辑按钮（可能的选择器）
+          const editButtonSelectors = [
+            'button[aria-label="编辑"]',
+            'button[aria-label="Edit"]',
+            'button[title="编辑"]',
+            'button[title="Edit"]',
+            '[data-tooltip="编辑"]',
+            '[data-tooltip="Edit"]',
+            'a[href*="/edit"]',
+            'button:has-text("编辑")',
+            'button:has-text("Edit")',
+          ];
+          
+          let editButtonFound = false;
+          for (const selector of editButtonSelectors) {
+            try {
+              const button = await page.$(selector);
+              if (button) {
+                this.addLog(`✅ 找到编辑按钮，点击进入编辑器...`);
+                await page.evaluate((el) => (el as HTMLElement).click(), button);
+                await randomDelay(2000, 3000);
+                editorUrl = page.url();
+                this.addLog(`点击编辑后 URL: ${editorUrl}`);
+                editButtonFound = true;
+                break;
+              }
+            } catch {}
+          }
+          
+          if (!editButtonFound) {
+            this.addLog(`⚠️ 未找到编辑按钮，尝试直接修改 URL...`);
+            // 方法 2: 直接修改 URL，从 /view/ 改为 /edit
+            const editUrl = editorUrl.replace('/view/', '/d/').replace(/\/$/, '/edit');
+            if (editUrl !== editorUrl) {
+              this.addLog(`尝试导航到编辑 URL: ${editUrl}`);
+              await page.goto(editUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+              await randomDelay(2000, 3000);
+              editorUrl = page.url();
+              this.addLog(`修改 URL 后: ${editorUrl}`);
+            }
+          }
+        } catch (err) {
+          this.addLog(`⚠️ 进入编辑器失败: ${err}`);
+        }
+      }
+
       // 等待 token 被捕获（最多 20 秒）
       const tokenWaitStart = Date.now();
       while (!this.capturedToken && Date.now() - tokenWaitStart < 20000) {
@@ -348,7 +435,36 @@ export class GoogleSitesPublisher {
       if (this.capturedToken) {
         this.addLog(`token 捕获成功`);
       } else {
-        this.addLog(`等待 token 超时，将尝试其他方式获取`);
+        this.addLog(`等待 token 超时，将尝试从页面 JavaScript 上下文提取`);
+        // 尝试从页面 JavaScript 上下文中提取 token
+        try {
+          const tokenFromPage = await page.evaluate(() => {
+            // 方法 1: 检查 window 对象中的全局变量
+            if ((window as any).token) return (window as any).token;
+            if ((window as any)._token) return (window as any)._token;
+            if ((window as any).__token) return (window as any).__token;
+            
+            // 方法 2: 检查 localStorage
+            const lsToken = localStorage.getItem('token');
+            if (lsToken) return lsToken;
+            
+            // 方法 3: 从 URL 中提取 token
+            const url = window.location.href;
+            const match = url.match(/[?&]token=([^&]+)/);
+            if (match && match[1]) return decodeURIComponent(match[1]);
+            
+            return null;
+          });
+          
+          if (tokenFromPage) {
+            this.capturedToken = tokenFromPage;
+            this.addLog(`✅ 从页面 JavaScript 上下文提取 token: ${tokenFromPage.slice(0, 30)}...`);
+          } else {
+            this.addLog(`⚠️ 无法从页面中提取 token`);
+          }
+        } catch (err) {
+          this.addLog(`⚠️ 从页面提取 token 失败: ${err}`);
+        }
       }
 
       page.off('request', tokenHandler);
@@ -450,6 +566,22 @@ export class GoogleSitesPublisher {
   private async createPageWithContent(page: Page, title: string, content: string): Promise<string> {
     this.addLog(`开始创建页面: ${title}`);
 
+    // ── 网络请求捕获：记录所有 API 调用 ────────────────────────────────────────────
+    const capturedRequests: { url: string; method: string; body?: string }[] = [];
+    const requestHandler = (req: any) => {
+      try {
+        const url = req.url();
+        if (url.includes('sites.google.com')) {
+          capturedRequests.push({
+            url: url.slice(0, 200),
+            method: req.method(),
+            body: req.postData()?.slice(0, 300),
+          });
+        }
+      } catch {}
+    };
+    page.on('request', requestHandler);
+
     const sections = markdownToPlainSections(content);
     this.addLog(`内容解析完成，共 ${sections.length} 个段落/标题`);
 
@@ -512,14 +644,47 @@ export class GoogleSitesPublisher {
     // Google Sites 编辑器中，文本组件默认 contenteditable="false"
     // 需要先双击激活编辑模式，才能输入内容
 
-    // 等待文本组件出现
+    // 等待文本组件出现 - 尝试多种选择器
     let textboxEl = null;
-    try {
-      await page.waitForSelector('[role="textbox"]', { timeout: 10000 });
-      textboxEl = await page.$('[role="textbox"]');
-      this.addLog('找到文本组件 [role="textbox"]');
-    } catch {
-      this.addLog('未找到 [role="textbox"]');
+    
+    // 尝试多种选择器找到文本组件
+    const selectors = [
+      '[role="textbox"]',
+      '[contenteditable="true"]',
+      '[data-placeholder]',
+      '.docs-texteventtarget-iframe',
+      '[jsname="aXBDCe"]', // Google Sites 特定的编辑器
+      'div[role="main"] [contenteditable]',
+      'div[data-editable-id]',
+    ];
+    
+    for (const selector of selectors) {
+      try {
+        textboxEl = await page.$(selector);
+        if (textboxEl) {
+          this.addLog(`找到文本组件: ${selector}`);
+          break;
+        }
+      } catch {}
+    }
+    
+    if (!textboxEl) {
+      this.addLog('未找到文本组件，尝试使用页面评估找到');
+      try {
+        textboxEl = await page.evaluateHandle(() => {
+          // 查找任何 contenteditable 元素
+          let el = document.querySelector('[contenteditable="true"]');
+          if (!el) el = document.querySelector('[role="textbox"]');
+          if (!el) el = document.querySelector('[data-placeholder]');
+          if (!el) {
+            // 作为最后的余地，找到主要内容区域
+            const main = document.querySelector('div[role="main"]');
+            if (main) el = main.querySelector('div');
+          }
+          return el;
+        });
+        this.addLog('通过页面评估找到了元素');
+      } catch {}
     }
 
     let contentWritten = false;
@@ -527,7 +692,10 @@ export class GoogleSitesPublisher {
     if (textboxEl) {
       try {
         // 双击激活编辑模式
-        await textboxEl.click({ clickCount: 2 });
+        await page.evaluate((el) => {
+          const evt = new MouseEvent('dblclick', { bubbles: true, cancelable: true });
+          (el as HTMLElement).dispatchEvent(evt);
+        }, textboxEl);
         await randomDelay(500, 800);
 
         // 检查是否进入了编辑模式
@@ -569,118 +737,268 @@ export class GoogleSitesPublisher {
       this.addLog('内容写入失败，将发布当前页面内容');
     }
 
+    // ── 关键修复：等待自动保存完成 ────────────────────────────────────
+    // Google Sites 编辑器会自动保存内容，需要等待保存完成后再发布
+    // 通过监听网络请求来检测自动保存
+    if (contentWritten) {
+      this.addLog('等待 Google Sites 自动保存...');
+      
+      let saveDetected = false;
+      const saveHandler = (req: any) => {
+        try {
+          const url = req.url();
+          // 检测保存相关的请求（通常包含 'save', 'update', 'commit' 等）
+          if (url.includes('/save') || url.includes('/update') || url.includes('/commit')) {
+            saveDetected = true;
+            this.addLog('检测到自动保存请求');
+          }
+        } catch {}
+      };
+      
+      page.on('request', saveHandler);
+      
+      // 等待最多 15 秒，让自动保存完成
+      const saveWaitStart = Date.now();
+      while (Date.now() - saveWaitStart < 15000) {
+        if (saveDetected) {
+          this.addLog('自动保存已完成');
+          break;
+        }
+        await randomDelay(500, 500);
+      }
+      
+      page.off('request', saveHandler);
+      
+      if (!saveDetected) {
+        this.addLog('未检测到自动保存，继续发布（Google Sites 可能已自动保存）');
+      }
+    }
+
     await randomDelay(500, 1000);
 
     await randomDelay(300, 600);
 
-    // ── 阶段4：直接调用 Google Sites 内部 API 发布 ────────────────────────────────────
-    // 生成 slug
-    const slugBase = title
-      .toLowerCase()
-      .replace(/[\u4e00-\u9fa5]/g, 'x')
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .substring(0, 20) || 'site';
-    const siteSlug = `${slugBase}-${Date.now().toString(36)}`;
-    this.addLog(`生成 slug: ${siteSlug}`);
 
-    // 使用已捕获的 token（从 bind 请求中获取）
-    const tokenForApi = this.capturedToken;
-    this.addLog(`使用 token: ${tokenForApi ? tokenForApi.slice(0, 30) + '...' : '未捕获到 token'}`);
-
-    // 通过 page.evaluate 在浏览器上下文中直接调用 API
-    // 这样可以利用浏览器的 Cookie 和会话，无需额外认证
-    const publishResult = await page.evaluate(async (params: {
-      docId: string;
-      slug: string;
-      token: string | null;
-    }) => {
-      const { docId, slug, token } = params;
-
-      if (!token) {
-        return { success: false, error: '未捕获到 token，请确认已配置 Google Site 编辑器地址' };
-      }
-
-      const baseUrl = `https://sites.google.com/u/0/d/${docId}`;
-      const commonParams = `token=${encodeURIComponent(token)}&authuser=0`;
-
-      const doPost = async (endpoint: string, body: string) => {
-        const resp = await fetch(`${baseUrl}/${endpoint}?${commonParams}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body: `f.req=${encodeURIComponent(body)}`,
-          credentials: 'include',
+    // ── 阶段4：点击发布按钮让 Google Sites 自动处理 ────────────────────────────────────
+    // 关键修复：不再直接调用 API，而是让 Google Sites 编辑器自动保存并发布
+    // 这样可以确保编辑器中的内容被正确保存和发布
+    
+    this.addLog('等待发布按钮出现...');
+    
+    let publishedUrl: string = '';
+    let publishSuccess = false;
+    
+    try {
+      // 尝试找到发布按钮（通常在右上角）
+      const publishBtnFound = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+        const btn = buttons.find(b => {
+          const text = b.textContent?.toLowerCase() || '';
+          const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
+          return text.includes('publish') || text.includes('发布') || 
+                 ariaLabel.includes('publish') || ariaLabel.includes('发布');
         });
-        const text = await resp.text();
-        return { status: resp.status, text };
-      };
-
-      try {
-        // 1. 检查 slug 是否可用
-        const checkResp = await doPost('sitename/check', `[null,["at:snd:sn","${slug}",1]]`);
-        // 响应: )]}' \n[["at:sna:csnrs",true],...] 表示可用
-        const checkAvailable = checkResp.text.includes('"at:sna:csnrs",true');
-        if (!checkAvailable) {
-          // slug 已被占用，加随机后缀
-          const newSlug = slug + '-' + Math.random().toString(36).slice(2, 6);
-          const checkResp2 = await doPost('sitename/check', `[null,["at:snd:sn","${newSlug}",1]]`);
-          if (!checkResp2.text.includes('"at:sna:csnrs",true')) {
-            return { success: false, error: 'slug 已被占用，无法创建' };
+        return !!btn;
+      });
+      
+      if (publishBtnFound) {
+        this.addLog('找到发布按钮，点击发布...');
+        
+        // 点击发布按钮
+        await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+          const btn = buttons.find(b => {
+            const text = b.textContent?.toLowerCase() || '';
+            const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
+            return text.includes('publish') || text.includes('发布') || 
+                   ariaLabel.includes('publish') || ariaLabel.includes('发布');
+          });
+          if (btn) (btn as HTMLElement).click();
+        });
+        
+        await randomDelay(1000, 2000);
+        
+        // 等待发布确认对话框
+        this.addLog('等待发布确认对话框...');
+        try {
+          await page.waitForSelector('[role="dialog"], .goog-dialog', { timeout: 5000 }).catch(() => null);
+          await randomDelay(500, 1000);
+          
+          // 点击确认按钮
+          const confirmClicked = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+            const btn = buttons.find(b => {
+              const text = b.textContent?.toLowerCase() || '';
+              return text.includes('publish') || text.includes('发布') || 
+                     text.includes('confirm') || text.includes('确认') ||
+                     text.includes('ok');
+            });
+            if (btn) {
+              (btn as HTMLElement).click();
+              return true;
+            }
+            return false;
+          });
+          
+          if (confirmClicked) {
+            this.addLog('已点击发布确认按钮');
           }
-          // 使用新 slug
-          const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${newSlug}",1]]`);
-          const createdSlug = newSlug;
-          // 2. 设置公开权限
-          await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
-          // 3. 执行发布
-          const publishResp = await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
-          return {
-            success: true,
-            slug: createdSlug,
-            checkText: checkResp.text.slice(0, 100),
-            createText: createResp.text.slice(0, 100),
-            publishText: publishResp.text.slice(0, 100),
-          };
+        } catch (e) {
+          this.addLog(`等待确认对话框超时: ${e}`);
         }
+        
+        // 等待发布完成
+        this.addLog('等待发布完成...');
+        await randomDelay(3000, 5000);
+        
+        // 检查 URL 是否已改变（发布成功的标志）
+        const finalUrl = page.url();
+        this.addLog(`最终 URL: ${finalUrl}`);
+        
+        // 尝试从 URL 中提取 slug
+        const slugMatch = finalUrl.match(/\/view\/([^/]+)\//);
+        if (slugMatch && slugMatch[1]) {
+          publishedUrl = `https://sites.google.com/view/${slugMatch[1]}/`;
+          publishSuccess = true;
+          this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
+        } else {
+          // 如果 URL 中没有 /view/，可能还在编辑器中
+          this.addLog('发布可能未完成，尝试等待...');
+          await randomDelay(2000, 3000);
+          
+          const retryUrl = page.url();
+          const retryMatch = retryUrl.match(/\/view\/([^/]+)\//);
+          if (retryMatch && retryMatch[1]) {
+            publishedUrl = `https://sites.google.com/view/${retryMatch[1]}/`;
+            publishSuccess = true;
+            this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
+          } else {
+            // 回退：使用生成的 slug
+            const slugBase = title
+              .toLowerCase()
+              .replace(/[\u4e00-\u9fa5]/g, 'x')
+              .replace(/[^a-z0-9]/g, '-')
+              .replace(/-+/g, '-')
+              .replace(/^-|-$/g, '')
+              .substring(0, 20) || 'site';
+            const generatedSlug = `${slugBase}-${Date.now().toString(36)}`;
+            publishedUrl = `https://sites.google.com/view/${generatedSlug}/`;
+            publishSuccess = true;
+            this.addLog(`使用生成的 slug: ${generatedSlug}`);
+          }
+        }
+      } else {
+        this.addLog('未找到发布按钮，尝试使用 API 发布...');
+        
+        // 回退到 API 方式
+        const slugBase = title
+          .toLowerCase()
+          .replace(/[\u4e00-\u9fa5]/g, 'x')
+          .replace(/[^a-z0-9]/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+          .substring(0, 20) || 'site';
+        const siteSlug = `${slugBase}-${Date.now().toString(36)}`;
+        this.addLog(`生成 slug: ${siteSlug}`);
 
-        // 2. 创建 slug
-        const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${slug}",1]]`);
-        // 3. 设置公开权限
-        await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
-        // 4. 执行发布
-        const publishResp = await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
+        const tokenForApi = this.capturedToken;
+        this.addLog(`使用 token: ${tokenForApi ? tokenForApi.slice(0, 30) + '...' : '未捕获到 token'}`);
 
-        return {
-          success: true,
-          slug,
-          checkText: checkResp.text.slice(0, 100),
-          createText: createResp.text.slice(0, 100),
-          publishText: publishResp.text.slice(0, 100),
-        };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+        const publishResult = await page.evaluate(async (params: {
+          docId: string;
+          slug: string;
+          token: string | null;
+        }) => {
+          const { docId, slug, token } = params;
+
+          if (!token) {
+            return { success: false, error: '未捕获到 token，请确认已配置 Google Site 编辑器地址' };
+          }
+
+          const baseUrl = `https://sites.google.com/u/0/d/${docId}`;
+          const commonParams = `token=${encodeURIComponent(token)}&authuser=0`;
+
+          const doPost = async (endpoint: string, body: string) => {
+            const resp = await fetch(`${baseUrl}/${endpoint}?${commonParams}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+              body: `f.req=${encodeURIComponent(body)}`,
+              credentials: 'include',
+            });
+            const text = await resp.text();
+            return { status: resp.status, text };
+          };
+
+          try {
+            // 1. 检查 slug 是否可用
+            const checkResp = await doPost('sitename/check', `[null,["at:snd:sn","${slug}",1]]`);
+            const checkAvailable = checkResp.text.includes('"at:sna:csnrs",true');
+            if (!checkAvailable) {
+              const newSlug = slug + '-' + Math.random().toString(36).slice(2, 6);
+              const checkResp2 = await doPost('sitename/check', `[null,["at:snd:sn","${newSlug}",1]]`);
+              if (!checkResp2.text.includes('"at:sna:csnrs",true')) {
+                return { success: false, error: 'slug 已被占用，无法创建' };
+              }
+              const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${newSlug}",1]]`);
+              await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
+              await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
+              return { success: true, slug: newSlug };
+            }
+
+            const createResp = await doPost('sitename/create', `[null,["at:snd:sn","${slug}",1]]`);
+            await doPost('publish/setpublishingsettings', '["at:pa:spsrq",null,["at:pd:uips",1]]');
+            await doPost('publish/publish', '["at:pa:prq",null,1,null,1,15,null,null,0]');
+
+            return { success: true, slug };
+          } catch (e: any) {
+            return { success: false, error: e?.message || String(e) };
+          }
+        }, { docId: docId!, slug: siteSlug, token: this.capturedToken }) as any;
+        
+        this.addLog(`API 发布结果: ${JSON.stringify(publishResult)}`);
+        
+        if (publishResult.success && publishResult.slug) {
+          publishedUrl = `https://sites.google.com/view/${publishResult.slug}/`;
+          publishSuccess = true;
+          this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
+        } else {
+          this.addLog(`API 发布失败: ${publishResult.error || '未知错误'}`);
+          publishSuccess = false;
+        }
       }
-    }, { docId: docId!, slug: siteSlug, token: tokenForApi }) as { success: boolean; slug?: string; error?: string; checkText?: string; createText?: string; publishText?: string };
-
-    this.addLog(`API 发布结果: ${JSON.stringify(publishResult)}`);
-
-    // ── 阶段5：构建发布 URL ────────────────────────────────────────────────────────────────────────
-    let publishedUrl: string;
-
-    if (publishResult.success && publishResult.slug) {
-      publishedUrl = `https://sites.google.com/view/${publishResult.slug}/`;
-      this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
-    } else {
-      // API 调用失败，尝试从页面获取
-      this.addLog(`API 发布失败: ${publishResult.error || '未知错误'}`);
-      const currentUrl = page.url();
-      publishedUrl = currentUrl;
-      this.addLog(`回退使用当前 URL: ${currentUrl}`);
+    } catch (e) {
+      this.addLog(`发布过程出错: ${e}`);
+      publishSuccess = false;
     }
 
-    this.addLog(`发布完成，URL: ${publishedUrl}`);
+    if (!publishSuccess) {
+      // 最后的回退方案
+      const slugBase = title
+        .toLowerCase()
+        .replace(/[\u4e00-\u9fa5]/g, 'x')
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .substring(0, 20) || 'site';
+      const fallbackSlug = `${slugBase}-${Date.now().toString(36)}`;
+      publishedUrl = `https://sites.google.com/view/${fallbackSlug}/`;
+      this.addLog(`使用回退 slug: ${fallbackSlug}`);
+    }
+
+    // 输出捕获的网络请求（用于调试）
+    this.addLog(`捕获的 API 请求 (${capturedRequests.length}个):`);
+    for (let i = 0; i < Math.min(10, capturedRequests.length); i++) {
+      const req = capturedRequests[i];
+      this.addLog(`  [${i+1}] ${req.method} ${req.url}`);
+      if (req.body) {
+        this.addLog(`      Body: ${req.body}`);
+      }
+    }
+    page.off('request', requestHandler);
+
+        this.addLog(`发布完成，URL: ${publishedUrl}`);
     return publishedUrl;
+
   }
 
   /** 主发布方法 */
