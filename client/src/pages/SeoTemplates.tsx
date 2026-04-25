@@ -245,6 +245,7 @@ export default function SeoTemplates() {
 
   const [editorForm, setEditorForm] = useState({
     name: "", type: "informational" as any, description: "", promptTemplate: "", minWords: 800, maxWords: 1500,
+    siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "600px", embedPosition: "bottom" as "bottom" | "top",
   });
   const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
   const [checkedTypes, setCheckedTypes] = useState<Set<BlockType>>(new Set());
@@ -260,7 +261,7 @@ export default function SeoTemplates() {
 
   function openCreate() {
     setEditingTemplate(null);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1500 });
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1500, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "600px", embedPosition: "bottom" as "bottom" | "top" });
     setBlocks([]);
     setCheckedTypes(new Set());
     setShowEditor(true);
@@ -268,7 +269,7 @@ export default function SeoTemplates() {
 
   function openEdit(tpl: any) {
     setEditingTemplate(tpl);
-    setEditorForm({ name: tpl.name, type: tpl.type, description: tpl.description ?? "", promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1500 });
+    setEditorForm({ name: tpl.name, type: tpl.type, description: tpl.description ?? "", promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1500, siteNameSuffix: (tpl as any).siteNameSuffix ?? "", embedUrl: (tpl as any).embedUrl ?? "", embedWidth: (tpl as any).embedWidth ?? "100%", embedHeight: (tpl as any).embedHeight ?? "600px", embedPosition: ((tpl as any).embedPosition ?? "bottom") as "bottom" | "top" });
     const savedBlocks: TemplateBlock[] = tpl.structure?.blocks ?? [];
     setBlocks(savedBlocks);
     setCheckedTypes(new Set(savedBlocks.map((b: TemplateBlock) => b.type)));
@@ -343,9 +344,9 @@ export default function SeoTemplates() {
     const finalPrompt = editorForm.promptTemplate.trim() || buildAutoPrompt();
     const structure = { blocks };
     if (editingTemplate) {
-      updateMut.mutate({ id: editingTemplate.id, name: editorForm.name, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure });
+      updateMut.mutate({ id: editingTemplate.id, name: editorForm.name, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure, siteNameSuffix: (editorForm as any).siteNameSuffix || undefined, embedUrl: (editorForm as any).embedUrl || undefined, embedWidth: (editorForm as any).embedWidth || undefined, embedHeight: (editorForm as any).embedHeight || undefined, embedPosition: (editorForm as any).embedPosition || undefined });
     } else {
-      createMut.mutate({ name: editorForm.name, type: editorForm.type, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure });
+      createMut.mutate({ name: editorForm.name, type: editorForm.type, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure, siteNameSuffix: (editorForm as any).siteNameSuffix || undefined, embedUrl: (editorForm as any).embedUrl || undefined, embedWidth: (editorForm as any).embedWidth || undefined, embedHeight: (editorForm as any).embedHeight || undefined, embedPosition: (editorForm as any).embedPosition || undefined });
     }
   }
 
@@ -522,6 +523,65 @@ export default function SeoTemplates() {
                 </div>
                 <Textarea rows={5} className="text-xs font-mono" placeholder="留空则根据板块自动生成提示词。支持占位符：{keyword} {language} {minWords}" value={editorForm.promptTemplate} onChange={e => setEditorForm(f => ({ ...f, promptTemplate: e.target.value }))} />
                 <p className="text-xs text-muted-foreground">留空时系统将根据上方板块配置自动生成提示词</p>
+              </div>
+
+              {/* 发布设置 */}
+              <div className="space-y-3 border-t pt-4">
+                <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                  <span>🌐</span> 发布设置
+                </h3>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">站点名称后缀</label>
+                  <input
+                    className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="如：免费下载 教程（发布时站点名 = 关键词 + 后缀）"
+                    value={(editorForm as any).siteNameSuffix ?? ""}
+                    onChange={e => setEditorForm(f => ({ ...f, siteNameSuffix: e.target.value } as any))}
+                  />
+                  <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">内嵌网站 URL</label>
+                  <input
+                    className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="https://example.com（留空则不嵌入）"
+                    value={(editorForm as any).embedUrl ?? ""}
+                    onChange={e => setEditorForm(f => ({ ...f, embedUrl: e.target.value } as any))}
+                  />
+                </div>
+                {(editorForm as any).embedUrl && (
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">宽度</label>
+                      <input
+                        className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="100%"
+                        value={(editorForm as any).embedWidth ?? "100%"}
+                        onChange={e => setEditorForm(f => ({ ...f, embedWidth: e.target.value } as any))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">高度</label>
+                      <input
+                        className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="600px"
+                        value={(editorForm as any).embedHeight ?? "600px"}
+                        onChange={e => setEditorForm(f => ({ ...f, embedHeight: e.target.value } as any))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">嵌入位置</label>
+                      <select
+                        className="w-full h-8 px-2 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        value={(editorForm as any).embedPosition ?? "bottom"}
+                        onChange={e => setEditorForm(f => ({ ...f, embedPosition: e.target.value } as any))}
+                      >
+                        <option value="bottom">文章底部</option>
+                        <option value="top">文章顶部</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -1003,6 +1003,11 @@ const seoTemplatesRouter = router({
     promptTemplate: z.string().optional(),
     minWords: z.number().default(800),
     maxWords: z.number().default(1500),
+    siteNameSuffix: z.string().optional(),
+    embedUrl: z.string().optional(),
+    embedWidth: z.string().optional(),
+    embedHeight: z.string().optional(),
+    embedPosition: z.enum(["top", "bottom"]).optional(),
   })).mutation(async ({ input }) => {
     await createSeoTemplate({ ...input, isPreset: false, isActive: true });
     return { success: true };
@@ -1017,6 +1022,11 @@ const seoTemplatesRouter = router({
     minWords: z.number().optional(),
     maxWords: z.number().optional(),
     isActive: z.boolean().optional(),
+    siteNameSuffix: z.string().optional(),
+    embedUrl: z.string().optional(),
+    embedWidth: z.string().optional(),
+    embedHeight: z.string().optional(),
+    embedPosition: z.enum(["top", "bottom"]).optional(),
   })).mutation(async ({ input }) => {
     const { id, ...data } = input;
     await updateSeoTemplate(id, data);
@@ -1141,27 +1151,47 @@ async function runPublishTaskAsync(
   }
   const proxyConfig = (account as any).proxyConfig as any;
   const fingerprintData = (account as any).browserFingerprint as any;
-  // 读取网站名称后缀设置，构造 siteName = 文章标题 + 后缀
-  const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
-  const siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
-  const computedSiteName = siteNameSuffix ? `${material.title} ${siteNameSuffix}` : material.title;
+  // 读取网站名称后缀设置，优先使用模板的 siteNameSuffix，其次用系统设置
+  let siteNameSuffix = "";
+  let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
 
-  // 提取 SEO 模板中的内嵌网站板块
-  let embedBlocks: Array<{ embedUrl: string; embedHeight?: number }> = [];
   if ((material as any).seoTemplateId) {
     try {
       const tpl = await getSeoTemplateById((material as any).seoTemplateId);
-      if (tpl?.structure) {
-        const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
-        if (Array.isArray(structure)) {
-          embedBlocks = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
-            .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as number | undefined }));
+      if (tpl) {
+        // 优先使用模板的站点名称后缀
+        if ((tpl as any).siteNameSuffix) {
+          siteNameSuffix = ((tpl as any).siteNameSuffix as string).trim();
+        }
+        // 读取模板的内嵌网站配置
+        if ((tpl as any).embedUrl) {
+          embedBlocks = [{
+            embedUrl: (tpl as any).embedUrl as string,
+            embedWidth: ((tpl as any).embedWidth as string) || "100%",
+            embedHeight: ((tpl as any).embedHeight as string) || "600px",
+            embedPosition: ((tpl as any).embedPosition as string) || "bottom",
+          }];
+        } else if (tpl.structure) {
+          // 兼容旧版：从 structure 中提取 embed 板块
+          const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
+          if (Array.isArray(structure)) {
+            const structureEmbeds = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
+              .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as string | undefined }));
+            if (structureEmbeds.length > 0) embedBlocks = structureEmbeds;
+          }
         }
       }
     } catch (e) {
       console.error('[发布引擎] 读取 SEO 模板失败:', e);
     }
   }
+
+  // 如果模板没有设置后缀，则使用系统设置
+  if (!siteNameSuffix) {
+    const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
+    siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
+  }
+  const computedSiteName = siteNameSuffix ? `${material.title} ${siteNameSuffix}` : material.title;
 
   try {
     const result = await googleSitesPublisher.publish({

@@ -198,3 +198,10 @@
 - [x] 批量生成弹窗：将「文章类型」改为「SEO 模板」下拉，列出已创建模板，保留「不使用模板（自由生成）」选项
 - [x] 选择模板时隐藏「文章类型」固定选项，改用模板的类型；不使用模板时显示文章类型选择
 - [x] handleBatchGenerate：选择模板时传 templateId，不选时传 style；后端执行时使用模板的 promptTemplate 和结构生成文章
+
+## SEO 模板新增站点名称后缀和内嵌网站配置（2026-04-25）
+
+- [ ] DB schema：seoTemplates 表新增 siteNameSuffix、embedUrl、embedWidth、embedHeight、embedPosition 字段
+- [ ] routers.ts：seoTemplates create/update 支持新字段
+- [ ] 发布流程：读取模板的 siteNameSuffix 组合站点名称；读取 embedUrl 等配置注入嵌入块到 Google Sites 页面
+- [ ] SeoTemplates.tsx：编辑弹窗新增「发布设置」区域，包含站点名称后缀和内嵌网站配置（URL/宽度/高度/位置）

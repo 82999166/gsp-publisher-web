@@ -75,6 +75,13 @@ export const seoTemplates = mysqlTable("seo_templates", {
   isPreset: boolean("isPreset").default(false),
   isActive: boolean("isActive").default(true),
   usageCount: int("usageCount").default(0),
+  // 发布设置：站点名称后缀（发布时站点名称 = 关键词 + 后缀）
+  siteNameSuffix: varchar("siteNameSuffix", { length: 256 }),
+  // 内嵌网站配置
+  embedUrl: varchar("embedUrl", { length: 1024 }),
+  embedWidth: varchar("embedWidth", { length: 32 }).default("100%"),
+  embedHeight: varchar("embedHeight", { length: 32 }).default("600px"),
+  embedPosition: mysqlEnum("embedPosition", ["top", "bottom"]).default("bottom"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

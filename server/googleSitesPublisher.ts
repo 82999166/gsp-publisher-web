@@ -94,8 +94,8 @@ export interface PublishOptions {
   headless?: boolean;
   /** 操作超时（毫秒，默认 120000） */
   timeout?: number;
-  /** 内嵌网站板块列表（来自 SEO 模板 structure 中 type=="embed" 的板块） */
-  embedBlocks?: Array<{ embedUrl: string; embedHeight?: number }>;
+  /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置） */
+  embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>;
 }
 
 export interface CookieEntry {
@@ -474,7 +474,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedHeight?: number }>): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -621,7 +621,8 @@ export class GoogleSitesPublisher {
       this.addLog(`开始插入 ${embedBlocks.length} 个内嵌网站板块...`);
       for (const block of embedBlocks) {
         if (block.embedUrl) {
-          await this.insertEmbedBlock(page, block.embedUrl, block.embedHeight ?? 600);
+          const heightNum = typeof block.embedHeight === 'string' ? parseInt(block.embedHeight) || 600 : (block.embedHeight ?? 600);
+          await this.insertEmbedBlock(page, block.embedUrl, heightNum);
           await randomDelay(1000, 1500);
         }
       }
