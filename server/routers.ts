@@ -1499,11 +1499,28 @@ async function runBatchWorker(batchId: number) {
       }
       const titleHint = item.title ? `文章标题已指定为：「${item.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
+      // 如果有模板，使用模板的 promptTemplate
+      let systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，类型${styleName}，字数不少于${batch.minWords}字，包含H1/H2/H3结构，SEO关键词密度0.5%-2%，返回JSON格式。${insertHints}`;
+      let seoTemplateId: number | null = null;
+      if (batch.templateId) {
+        const tpl = await getSeoTemplateById(batch.templateId);
+        if (tpl) {
+          seoTemplateId = tpl.id;
+          const structureDesc = Array.isArray(tpl.structure)
+            ? (tpl.structure as any[]).map((b: any) => `${b.type}${b.label ? `(${b.label})` : ""}`).join(" -> ")
+            : JSON.stringify(tpl.structure);
+          systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，字数不少于${tpl.minWords ?? batch.minWords}字，SEO关键词密度0.5%-2%，返回JSON格式。
+模板类型：${tpl.type}。文章结构应按照：${structureDesc}。
+${tpl.promptTemplate ? `模板要求：${tpl.promptTemplate}` : ""}
+${insertHints}`;
+        }
+      }
+
       const response = await invokeLLM({ ...await getAiConfig(),
         messages: [
           {
             role: "system",
-            content: `你是专业的SEO内容创作专家。要求：语言${langName}，类型${styleName}，字数不少于${batch.minWords}字，包含H1/H2/H3结构，SEO关键词密度0.5%-2%，返回JSON格式。${insertHints}`,
+            content: systemPrompt,
           },
           {
             role: "user",
@@ -1528,6 +1545,7 @@ async function runBatchWorker(batchId: number) {
         wordCount: parsed.wordCount,
         qualityScore: parsed.qualityScore,
         status: autoStatus,
+        seoTemplateId: seoTemplateId ?? undefined,
       });
 
       await updateGenerationItem(item.id, {
@@ -1599,10 +1617,13 @@ const batchGenerationRouter = router({
     insertParagraph: z.string().optional(),
     autoApproveThreshold: z.number().min(0).max(100).default(0),
     autoQueue: z.boolean().default(false),
+    templateId: z.number().optional(),
   })).mutation(async ({ input }) => {
-    const { items, ...batchData } = input;
+    const { items, autoQueue, templateId, ...batchData } = input;
     await createGenerationBatch({
       ...batchData,
+      autoQueue: autoQueue ? 1 : 0,
+      templateId: templateId ?? null,
       totalCount: items.length,
       status: "pending",
     });

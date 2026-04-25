@@ -211,6 +211,7 @@ export default function AIContent() {
   const [batchAnchorLinks, setBatchAnchorLinks] = useState<{anchorText:string;url:string;position:"intro"|"body"|"end"}[]>([]);
   const [batchAnchorInput, setBatchAnchorInput] = useState({anchorText:"",url:"",position:"body" as "intro"|"body"|"end"});
   const [batchInsertParagraph, setBatchInsertParagraph] = useState("");
+  const [batchTemplateId, setBatchTemplateId] = useState<number | null>(null);
   const { data: recentBatches = [], refetch: refetchBatches } = trpc.batchGeneration.list.useQuery();
   const createBatchMut = trpc.batchGeneration.create.useMutation({
     onSuccess: (data) => {
@@ -254,6 +255,7 @@ export default function AIContent() {
       concurrency: batchConcurrency,
       autoApproveThreshold: batchAutoApprove,
       autoQueue: batchAutoQueue,
+      templateId: batchTemplateId ?? undefined,
       insertKeywords: batchInsertKws,
       anchorLinks: batchAnchorLinks,
       insertParagraph: batchInsertParagraph || undefined,
@@ -959,15 +961,35 @@ export default function AIContent() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>文章类型</Label>
-                <Select value={genStyle} onValueChange={setGenStyle}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Label>SEO 模板</Label>
+                <Select
+                  value={batchTemplateId ? String(batchTemplateId) : "__free__"}
+                  onValueChange={v => setBatchTemplateId(v === "__free__" ? null : Number(v))}
+                >
+                  <SelectTrigger><SelectValue placeholder="不使用模板（自由生成）" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="informational">信息型（科普/介绍）</SelectItem>
-                    <SelectItem value="commercial">商业型（评测/推荐）</SelectItem>
-                    <SelectItem value="navigational">导航型（品牌/入口）</SelectItem>
+                    <SelectItem value="__free__">不使用模板（自由生成）</SelectItem>
+                    {(seoTemplates as any[]).map((t: any) => (
+                      <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                {!batchTemplateId && (
+                  <div className="space-y-1.5 pt-1">
+                    <Label className="text-xs text-muted-foreground">文章类型（无模板时使用）</Label>
+                    <Select value={genStyle} onValueChange={setGenStyle}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="informational">信息型（科普/介绍）</SelectItem>
+                        <SelectItem value="commercial">商业型（评测/推荐）</SelectItem>
+                        <SelectItem value="navigational">导航型（品牌/入口）</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {batchTemplateId && (
+                  <p className="text-[10px] text-primary">✓ 将按「{(seoTemplates as any[]).find((t:any)=>t.id===batchTemplateId)?.name}」模板结构生成文章</p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>最少字数</Label>

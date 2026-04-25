@@ -243,6 +243,10 @@ export const generationBatches = mysqlTable("generation_batches", {
   concurrency: int("concurrency").default(3).notNull(),
   // 自动审批阈值（质量分达到该阈值自动审批）
   autoApproveThreshold: int("autoApproveThreshold").default(0).notNull(),
+  // 生成后自动加入发布队列
+  autoQueue: tinyint("autoQueue").default(0).notNull(),
+  // 关联的 SEO 模板 ID（可空，空则自由生成）
+  templateId: int("templateId"),
   // 指定插入内容（全局配置）
   insertKeywords: json("insertKeywords"),   // string[]
   anchorLinks: json("anchorLinks"),         // {anchorText, url, position}[]
