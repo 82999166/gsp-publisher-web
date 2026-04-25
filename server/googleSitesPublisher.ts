@@ -459,12 +459,29 @@ export class GoogleSitesPublisher {
         this.addLog(`模板选择页可点击元素: ${JSON.stringify(clickables)}`);
       } catch {}
 
+      // 先输出页面所有 docs-homescreen-item 类的元素，帮助调试
+      try {
+        const itemInfo = await page.evaluate(() => {
+          const items = Array.from(document.querySelectorAll('.docs-homescreen-item, [class*="homescreen-item"]'));
+          return items.slice(0, 10).map(el => ({
+            tag: el.tagName,
+            class: el.className?.slice(0, 80),
+            text: el.textContent?.trim().slice(0, 40),
+            ariaLabel: el.getAttribute('aria-label'),
+            children: el.children.length,
+          }));
+        });
+        this.addLog(`docs-homescreen-item 元素: ${JSON.stringify(itemInfo)}`);
+      } catch {}
+
       // 尝试多种选择器点击空白模板
       const blankSelectors = [
         '[aria-label="Blank"]',
         '[aria-label="空白"]',
         '[data-id="blank"]',
         '[jsname="blank"]',
+        '.docs-homescreen-item:first-child',
+        '.docs-homescreen-item',
       ];
 
       let clicked = false;
@@ -481,22 +498,42 @@ export class GoogleSitesPublisher {
       }
 
       if (!clicked) {
-        // 通过文字查找
+        // 通过文字查找 - Google Sites 的空白模板是 docs-homescreen-item 类的元素
         try {
           const found = await page.evaluate(() => {
-            const els = Array.from(document.querySelectorAll('[role="button"], div[tabindex="0"]'));
-            const blank = els.find(el => {
-              const text = el.textContent?.trim().toLowerCase();
-              return text === 'blank' || text === '空白' || el.getAttribute('aria-label')?.toLowerCase().includes('blank');
+            // 方法1: 找 docs-homescreen-item 类的元素，其中包含"空白网站"文字
+            const items = Array.from(document.querySelectorAll('.docs-homescreen-item, .docs-homescreen-item-section'));
+            for (const item of items) {
+              const text = item.textContent?.trim() || '';
+              if (text.startsWith('空白网站') || text === '空白' || text === 'Blank') {
+                // 找到包含空白网站的区域，点击第一个子元素（实际的卡片）
+                const card = item.querySelector('[role="button"], .docs-homescreen-item-content, .docs-homescreen-item-thumbnail') as HTMLElement;
+                if (card) { card.click(); return 'card-child'; }
+                (item as HTMLElement).click();
+                return 'item-section';
+              }
+            }
+            // 方法2: 找所有可点击元素，匹配"空白网站"开头
+            const allEls = Array.from(document.querySelectorAll('[role="button"], div[tabindex="0"], div[jsaction]'));
+            const blank = allEls.find(el => {
+              const text = el.textContent?.trim() || '';
+              const label = el.getAttribute('aria-label') || '';
+              return text === '空白网站' || text === '空白' || text === 'Blank' || 
+                     label.includes('空白') || label.toLowerCase().includes('blank');
             });
-            if (blank) { (blank as HTMLElement).click(); return true; }
-            return false;
+            if (blank) { (blank as HTMLElement).click(); return 'aria-match'; }
+            // 方法3: 找第一个 docs-homescreen-item 类元素直接点击
+            const firstItem = document.querySelector('.docs-homescreen-item') as HTMLElement;
+            if (firstItem) { firstItem.click(); return 'first-item'; }
+            return null;
           });
           if (found) {
             clicked = true;
-            this.addLog('通过文字查找点击了空白模板');
+            this.addLog(`通过文字查找点击了空白模板: ${found}`);
           }
-        } catch {}
+        } catch (e) {
+          this.addLog(`文字查找出错: ${e}`);
+        }
       }
 
       if (clicked) {
@@ -900,34 +937,55 @@ export class GoogleSitesPublisher {
           this.addLog(`等待发布对话框超时: ${e}`);
         }
         
-        // 等待发布完成
+        // 等待发布完成 - 监听 publish API 请求确认发布真正完成
         this.addLog('等待发布完成...');
-        await randomDelay(4000, 6000);
         
-        // 尝试等待工具栏"复制已发布网站的链接"按钮出现，确认发布成功
+        let publishConfirmed = false;
+        
+        // 方法1：等待工具栏"复制已发布网站的链接"按钮出现（最可靠的成功标志）
         try {
           await page.waitForFunction(
             () => {
               const btns = Array.from(document.querySelectorAll('[aria-label]'));
               return btns.some(b => {
                 const label = b.getAttribute('aria-label') || '';
-                return label.includes('复制已发布') || label.includes('Copy the published');
+                return label.includes('复制已发布') || label.includes('Copy the published') ||
+                       label.includes('已发布') || label.includes('Published');
               });
             },
-            { timeout: 8000 }
+            { timeout: 20000 }  // 增加到 20 秒
           );
           this.addLog('✅ 工具栏显示"复制已发布网站的链接"，发布成功！');
+          publishConfirmed = true;
         } catch {
-          this.addLog('工具栏未检测到发布成功标志，继续使用填入的 slug...');
+          this.addLog('工具栏 20秒内未检测到发布成功标志');
         }
         
-        // 使用填入的 slug 构建真实 URL
+        // 方法2：检查页面上是否有表示发布成功的元素
+        if (!publishConfirmed) {
+          try {
+            const pageState = await page.evaluate(() => {
+              // 检查工具栏所有按钮的 ariaLabel
+              const btns = Array.from(document.querySelectorAll('[aria-label]'));
+              const labels = btns.map(b => b.getAttribute('aria-label')).filter(Boolean);
+              return { labels: labels.slice(0, 20) };
+            });
+            this.addLog(`工具栏按钮状态: ${JSON.stringify(pageState.labels)}`);
+          } catch {}
+        }
+        
+        // 使用填入的 slug 构建 URL
         if (usedSlug) {
           publishedUrl = `https://sites.google.com/view/${usedSlug}/`;
-          publishSuccess = true;
-          this.addLog(`✅ 发布完成，slug: ${usedSlug}，URL: ${publishedUrl}`);
+          publishSuccess = publishConfirmed; // 只有确认发布成功才标记成功
+          if (publishConfirmed) {
+            this.addLog(`✅ 发布成功！slug: ${usedSlug}，URL: ${publishedUrl}`);
+          } else {
+            this.addLog(`⚠️ 发布可能未完成，slug: ${usedSlug}，请手动检查 Google Sites 后台`);
+            publishSuccess = false;
+          }
         } else {
-          this.addLog('未找到 slug，发布可能失败');
+          this.addLog('未找到 slug，发布失败');
           publishSuccess = false;
         }
       } else {
