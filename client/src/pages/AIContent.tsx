@@ -20,18 +20,25 @@ import { trpc } from "@/lib/trpc";
 import {
   BarChart2,
   BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   FileText,
   HelpCircle,
+  Layers,
   Loader2,
+  Pause,
+  Play,
   Plus,
   Sparkles,
   Tags,
   Trash2,
   TrendingUp,
   Wand2,
+  X,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
 type Keyword = {
@@ -193,6 +200,52 @@ export default function AIContent() {
   const [longTailDialogOpen, setLongTailDialogOpen] = useState(false);
   const [longTailCoreKw, setLongTailCoreKw] = useState("");
   const [longTailCount, setLongTailCount] = useState(20);
+  // Batch generation state
+  const [batchGenDialogOpen, setBatchGenDialogOpen] = useState(false);
+  const [batchGenName, setBatchGenName] = useState("");
+  const { data: recentBatches = [], refetch: refetchBatches } = trpc.batchGeneration.list.useQuery();
+  const createBatchMut = trpc.batchGeneration.create.useMutation({
+    onSuccess: (data) => {
+      toast.success(`批次创建成功，共 ${data.totalCount} 条任务`);
+      setBatchGenDialogOpen(false);
+      refetchBatches();
+      // Auto-start the batch
+      startBatchMut.mutate({ id: data.batchId });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const startBatchMut = trpc.batchGeneration.start.useMutation({
+    onSuccess: () => { refetchBatches(); },
+  });
+  const pauseBatchMut = trpc.batchGeneration.pause.useMutation({
+    onSuccess: () => { refetchBatches(); },
+  });
+  const resumeBatchMut = trpc.batchGeneration.resume.useMutation({
+    onSuccess: () => { refetchBatches(); },
+  });
+  const cancelBatchMut = trpc.batchGeneration.cancel.useMutation({
+    onSuccess: () => { refetchBatches(); },
+  });
+  // Poll running batches
+  useEffect(() => {
+    const hasRunning = (recentBatches as any[]).some((b: any) => b.status === 'running');
+    if (!hasRunning) return;
+    const t = setInterval(() => refetchBatches(), 3000);
+    return () => clearInterval(t);
+  }, [recentBatches, refetchBatches]);
+  function handleBatchGenerate() {
+    if (selectedIds.length === 0) { toast.error("请先选择关键词"); return; }
+    const name = batchGenName || `批次_${new Date().toLocaleDateString("zh-CN").replace(/\//g, "")}_${selectedIds.length}词`;
+    const selectedKeywords = (keywords as Keyword[]).filter(k => selectedIds.includes(k.id));
+    createBatchMut.mutate({
+      name,
+      items: selectedKeywords.map(k => ({ keyword: k.keyword })),
+      language: genLang as any,
+      minWords: genMinWords,
+      style: genStyle as any,
+      concurrency: 3,
+    });
+  }
 
   function handleAddKeyword() {
     if (!newKeyword.trim()) return;
@@ -378,6 +431,15 @@ export default function AIContent() {
                           <BarChart2 className="h-3 w-3" />
                         )}
                         批量分析
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-6 text-xs gap-1 bg-primary hover:bg-primary/90 text-white"
+                        onClick={() => setBatchGenDialogOpen(true)}
+                        disabled={createBatchMut.isPending}
+                      >
+                        <Layers className="h-3 w-3" />
+                        批量生成文章
                       </Button>
                       <Button
                         variant="destructive"
@@ -695,6 +757,84 @@ export default function AIContent() {
             </div>
           </div>
 
+          {/* Recent Batch Generations */}
+          {(recentBatches as any[]).length > 0 && (
+            <div className="bg-white rounded-xl border border-border shadow-sm p-5">
+              <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                <Layers className="h-4 w-4 text-primary" />
+                批量生成批次
+              </h2>
+              <div className="space-y-2">
+                {(recentBatches as any[]).slice(0, 5).map((batch: any) => {
+                  const pct = batch.totalCount > 0 ? Math.round((batch.completedCount / batch.totalCount) * 100) : 0;
+                  const statusColor: Record<string, string> = {
+                    pending: "text-gray-500",
+                    running: "text-blue-600",
+                    paused: "text-yellow-600",
+                    completed: "text-green-600",
+                    cancelled: "text-red-500",
+                  };
+                  const statusLabel: Record<string, string> = {
+                    pending: "待启动",
+                    running: "生成中",
+                    paused: "已暂停",
+                    completed: "已完成",
+                    cancelled: "已取消",
+                  };
+                  return (
+                    <div key={batch.id} className="border border-border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-foreground truncate max-w-[160px]">{batch.name}</span>
+                          <span className={`text-[10px] font-medium ${statusColor[batch.status] ?? 'text-gray-500'}`}>
+                            {statusLabel[batch.status] ?? batch.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-muted-foreground">{batch.completedCount}/{batch.totalCount}</span>
+                          {batch.status === 'running' && (
+                            <button onClick={() => pauseBatchMut.mutate({ id: batch.id })} className="h-5 w-5 flex items-center justify-center rounded hover:bg-yellow-50 text-yellow-600" title="暂停">
+                              <Pause className="h-3 w-3" />
+                            </button>
+                          )}
+                          {batch.status === 'paused' && (
+                            <button onClick={() => resumeBatchMut.mutate({ id: batch.id })} className="h-5 w-5 flex items-center justify-center rounded hover:bg-blue-50 text-blue-600" title="继续">
+                              <Play className="h-3 w-3" />
+                            </button>
+                          )}
+                          {batch.status === 'pending' && (
+                            <button onClick={() => startBatchMut.mutate({ id: batch.id })} className="h-5 w-5 flex items-center justify-center rounded hover:bg-green-50 text-green-600" title="启动">
+                              <Play className="h-3 w-3" />
+                            </button>
+                          )}
+                          {(batch.status === 'running' || batch.status === 'paused' || batch.status === 'pending') && (
+                            <button onClick={() => { if(confirm('确认取消此批次？')) cancelBatchMut.mutate({ id: batch.id }); }} className="h-5 w-5 flex items-center justify-center rounded hover:bg-red-50 text-red-500" title="取消">
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                          {batch.status === 'completed' && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
+                        </div>
+                      </div>
+                      <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${batch.status === 'completed' ? 'bg-green-500' : batch.status === 'running' ? 'bg-blue-500' : 'bg-gray-400'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      {batch.status === 'running' && (
+                        <p className="text-[10px] text-muted-foreground">进度 {pct}%，已完成 {batch.completedCount} 篇</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-2">
+                完整批次管理请前往
+                <button className="text-primary hover:underline mx-1" onClick={() => window.location.hash = "/batch-generation"}>批量生成</button>
+                页面
+              </p>
+            </div>
+          )}
           {/* Recent generations */}
           <div className="bg-white rounded-xl border border-border shadow-sm p-5">
             <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
@@ -768,6 +908,64 @@ export default function AIContent() {
                 <><Loader2 className="h-4 w-4 animate-spin" />生成中...</>
               ) : (
                 <><Sparkles className="h-4 w-4" />生成并保存</>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Batch Generate Dialog */}
+      <Dialog open={batchGenDialogOpen} onOpenChange={setBatchGenDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-primary" />
+              批量生成文章
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-muted/40 rounded-lg p-3 text-xs text-muted-foreground">
+              将为选中的 <span className="font-semibold text-foreground">{selectedIds.length} 个关键词</span> 各生成一篇文章，使用当前右侧配置：
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="bg-white rounded p-2 border border-border text-center">
+                  <div className="font-medium text-foreground text-xs">{genLang === 'zh-CN' ? '简体中文' : genLang === 'en' ? '英文' : '繁体中文'}</div>
+                  <div className="text-[10px] text-muted-foreground">语言</div>
+                </div>
+                <div className="bg-white rounded p-2 border border-border text-center">
+                  <div className="font-medium text-foreground text-xs">{genStyle === 'informational' ? '信息型' : genStyle === 'commercial' ? '商业型' : '导航型'}</div>
+                  <div className="text-[10px] text-muted-foreground">文章类型</div>
+                </div>
+                <div className="bg-white rounded p-2 border border-border text-center">
+                  <div className="font-medium text-foreground text-xs">{genMinWords} 字</div>
+                  <div className="text-[10px] text-muted-foreground">最少字数</div>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>批次名称（可选）</Label>
+              <Input
+                placeholder={`批次_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '')}_${selectedIds.length}词`}
+                value={batchGenName}
+                onChange={e => setBatchGenName(e.target.value)}
+              />
+            </div>
+            <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+              <p className="font-medium">生成说明</p>
+              <p>• 创建后自动启动，后台并发生成（默认 3 并发）</p>
+              <p>• 生成完成的文章自动保存到「素材库」</p>
+              <p>• 可在下方批次卡片中查看进度和暂停/继续</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="outline" onClick={() => setBatchGenDialogOpen(false)}>取消</Button>
+            <Button
+              className="gap-2"
+              onClick={handleBatchGenerate}
+              disabled={createBatchMut.isPending}
+            >
+              {createBatchMut.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" />创建中...</>
+              ) : (
+                <><Sparkles className="h-4 w-4" />开始批量生成</>
               )}
             </Button>
           </div>
