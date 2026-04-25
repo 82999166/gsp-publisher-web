@@ -203,6 +203,14 @@ export default function AIContent() {
   // Batch generation state
   const [batchGenDialogOpen, setBatchGenDialogOpen] = useState(false);
   const [batchGenName, setBatchGenName] = useState("");
+  const [batchConcurrency, setBatchConcurrency] = useState(3);
+  const [batchAutoApprove, setBatchAutoApprove] = useState(70);
+  const [batchAutoQueue, setBatchAutoQueue] = useState(false);
+  const [batchInsertKws, setBatchInsertKws] = useState<string[]>([]);
+  const [batchInsertKwInput, setBatchInsertKwInput] = useState("");
+  const [batchAnchorLinks, setBatchAnchorLinks] = useState<{anchorText:string;url:string;position:"intro"|"body"|"end"}[]>([]);
+  const [batchAnchorInput, setBatchAnchorInput] = useState({anchorText:"",url:"",position:"body" as "intro"|"body"|"end"});
+  const [batchInsertParagraph, setBatchInsertParagraph] = useState("");
   const { data: recentBatches = [], refetch: refetchBatches } = trpc.batchGeneration.list.useQuery();
   const createBatchMut = trpc.batchGeneration.create.useMutation({
     onSuccess: (data) => {
@@ -243,7 +251,12 @@ export default function AIContent() {
       language: genLang as any,
       minWords: genMinWords,
       style: genStyle as any,
-      concurrency: 3,
+      concurrency: batchConcurrency,
+      autoApproveThreshold: batchAutoApprove,
+      autoQueue: batchAutoQueue,
+      insertKeywords: batchInsertKws,
+      anchorLinks: batchAnchorLinks,
+      insertParagraph: batchInsertParagraph || undefined,
     });
   }
 
@@ -915,47 +928,211 @@ export default function AIContent() {
       </Dialog>
       {/* Batch Generate Dialog */}
       <Dialog open={batchGenDialogOpen} onOpenChange={setBatchGenDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Layers className="h-5 w-5 text-primary" />
               批量生成文章
+              <span className="text-xs font-normal text-muted-foreground ml-1">已选 {selectedIds.length} 个关键词</span>
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="bg-muted/40 rounded-lg p-3 text-xs text-muted-foreground">
-              将为选中的 <span className="font-semibold text-foreground">{selectedIds.length} 个关键词</span> 各生成一篇文章，使用当前右侧配置：
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <div className="bg-white rounded p-2 border border-border text-center">
-                  <div className="font-medium text-foreground text-xs">{genLang === 'zh-CN' ? '简体中文' : genLang === 'en' ? '英文' : '繁体中文'}</div>
-                  <div className="text-[10px] text-muted-foreground">语言</div>
-                </div>
-                <div className="bg-white rounded p-2 border border-border text-center">
-                  <div className="font-medium text-foreground text-xs">{genStyle === 'informational' ? '信息型' : genStyle === 'commercial' ? '商业型' : '导航型'}</div>
-                  <div className="text-[10px] text-muted-foreground">文章类型</div>
-                </div>
-                <div className="bg-white rounded p-2 border border-border text-center">
-                  <div className="font-medium text-foreground text-xs">{genMinWords} 字</div>
-                  <div className="text-[10px] text-muted-foreground">最少字数</div>
-                </div>
+          <div className="space-y-5">
+            {/* 基础配置 */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>批次名称</Label>
+                <Input
+                  placeholder={`批次_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '')}_${selectedIds.length}词`}
+                  value={batchGenName}
+                  onChange={e => setBatchGenName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>文章语言</Label>
+                <Select value={genLang} onValueChange={setGenLang}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="zh-CN">简体中文</SelectItem>
+                    <SelectItem value="en">英文</SelectItem>
+                    <SelectItem value="zh-TW">繁体中文</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>文章类型</Label>
+                <Select value={genStyle} onValueChange={setGenStyle}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="informational">信息型（科普/介绍）</SelectItem>
+                    <SelectItem value="commercial">商业型（评测/推荐）</SelectItem>
+                    <SelectItem value="navigational">导航型（品牌/入口）</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>最少字数</Label>
+                <Input
+                  type="number" min={300} max={5000} step={100}
+                  value={genMinWords}
+                  onChange={e => setGenMinWords(parseInt(e.target.value) || 800)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>并发数（1-10）</Label>
+                <Input
+                  type="number" min={1} max={10}
+                  value={batchConcurrency}
+                  onChange={e => setBatchConcurrency(Math.min(10, Math.max(1, parseInt(e.target.value) || 3)))}
+                />
+                <p className="text-[10px] text-muted-foreground">建议 3-5，过高可能触发 API 限速</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>自动通过质量分阈值（0=不自动通过）</Label>
+                <Input
+                  type="number" min={0} max={100}
+                  value={batchAutoApprove}
+                  onChange={e => setBatchAutoApprove(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                />
+                <p className="text-[10px] text-muted-foreground">达到此分数的文章自动跳过审核</p>
               </div>
             </div>
+            {/* 自动加入发布队列 */}
+            <div className="flex items-center justify-between rounded-lg border border-border p-3">
+              <div>
+                <p className="text-sm font-medium">生成后自动加入发布队列</p>
+                <p className="text-xs text-muted-foreground">文章生成并通过质量分后，自动创建发布任务</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={batchAutoQueue}
+                onClick={() => setBatchAutoQueue(v => !v)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                  batchAutoQueue ? 'bg-primary' : 'bg-muted'
+                }`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  batchAutoQueue ? 'translate-x-6' : 'translate-x-1'
+                }`} />
+              </button>
+            </div>
+            {/* 指定插入关键词 */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Tags className="h-3.5 w-3.5 text-orange-500" />
+                指定插入关键词
+                <span className="text-[10px] text-muted-foreground font-normal">AI 生成时强制将这些词融入文章</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="输入关键词，如：品牌名、产品名"
+                  value={batchInsertKwInput}
+                  onChange={e => setBatchInsertKwInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && batchInsertKwInput.trim()) {
+                      setBatchInsertKws(prev => [...prev, batchInsertKwInput.trim()]);
+                      setBatchInsertKwInput("");
+                    }
+                  }}
+                />
+                <Button
+                  type="button" variant="outline" size="icon"
+                  onClick={() => {
+                    if (batchInsertKwInput.trim()) {
+                      setBatchInsertKws(prev => [...prev, batchInsertKwInput.trim()]);
+                      setBatchInsertKwInput("");
+                    }
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {batchInsertKws.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {batchInsertKws.map((kw, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 border border-orange-200 rounded-full px-2 py-0.5 text-xs">
+                      {kw}
+                      <button onClick={() => setBatchInsertKws(prev => prev.filter((_, j) => j !== i))} className="hover:text-red-500">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 指定锚文本超链接 */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-blue-500" />
+                指定锚文本超链接
+                <span className="text-[10px] text-muted-foreground font-normal">AI 生成时自动插入到文章中</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="锚文本（如：了解更多）"
+                  className="flex-1"
+                  value={batchAnchorInput.anchorText}
+                  onChange={e => setBatchAnchorInput(prev => ({...prev, anchorText: e.target.value}))}
+                />
+                <Input
+                  placeholder="目标 URL（https://...）"
+                  className="flex-1"
+                  value={batchAnchorInput.url}
+                  onChange={e => setBatchAnchorInput(prev => ({...prev, url: e.target.value}))}
+                />
+                <Select
+                  value={batchAnchorInput.position}
+                  onValueChange={v => setBatchAnchorInput(prev => ({...prev, position: v as any}))}
+                >
+                  <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="intro">开头</SelectItem>
+                    <SelectItem value="body">正文中</SelectItem>
+                    <SelectItem value="end">结尾</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button" variant="outline" size="icon"
+                  onClick={() => {
+                    if (batchAnchorInput.anchorText.trim() && batchAnchorInput.url.trim()) {
+                      setBatchAnchorLinks(prev => [...prev, {...batchAnchorInput}]);
+                      setBatchAnchorInput({anchorText:"", url:"", position:"body"});
+                    }
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {batchAnchorLinks.length > 0 && (
+                <div className="space-y-1">
+                  {batchAnchorLinks.map((link, i) => (
+                    <div key={i} className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-1.5 text-xs">
+                      <span className="text-blue-700 font-medium">{link.anchorText}</span>
+                      <span className="text-muted-foreground truncate flex-1">{link.url}</span>
+                      <span className="text-blue-500">{link.position === 'intro' ? '开头' : link.position === 'end' ? '结尾' : '正文中'}</span>
+                      <button onClick={() => setBatchAnchorLinks(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-red-500">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 指定插入段落 */}
             <div className="space-y-1.5">
-              <Label>批次名称（可选）</Label>
-              <Input
-                placeholder={`批次_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '')}_${selectedIds.length}词`}
-                value={batchGenName}
-                onChange={e => setBatchGenName(e.target.value)}
+              <Label className="flex items-center gap-1.5">
+                <BookOpen className="h-3.5 w-3.5 text-green-500" />
+                指定插入段落（可选）
+              </Label>
+              <Textarea
+                className="h-20 resize-none text-sm"
+                placeholder="输入需要强制插入到每篇文章正文中的固定内容，如：品牌介绍、免责声明、联系方式等"
+                value={batchInsertParagraph}
+                onChange={e => setBatchInsertParagraph(e.target.value)}
               />
             </div>
-            <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 space-y-1">
-              <p className="font-medium">生成说明</p>
-              <p>• 创建后自动启动，后台并发生成（默认 3 并发）</p>
-              <p>• 生成完成的文章自动保存到「素材库」</p>
-              <p>• 可在下方批次卡片中查看进度和暂停/继续</p>
-            </div>
           </div>
-          <div className="flex justify-end gap-2 mt-2">
+          <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-border">
             <Button variant="outline" onClick={() => setBatchGenDialogOpen(false)}>取消</Button>
             <Button
               className="gap-2"
@@ -965,7 +1142,7 @@ export default function AIContent() {
               {createBatchMut.isPending ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />创建中...</>
               ) : (
-                <><Sparkles className="h-4 w-4" />开始批量生成</>
+                <><Sparkles className="h-4 w-4" />开始批量生成（{selectedIds.length} 篇）</>
               )}
             </Button>
           </div>
