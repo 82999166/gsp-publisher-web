@@ -881,12 +881,12 @@ export class GoogleSitesPublisher {
               input.dispatchEvent(new Event('change', { bubbles: true }));
             }
             
-            // 1. 填写网站标题框（第一个输入框，通常 value="未命名网站"）
+            // 1. 填写网站标题框
+            // 匹配条件：value 不为空（有默认值"未命名网站"）且不是字体大小框且不是 URL 框
             const titleInput = inputs.find(i => {
               const val = (i as HTMLInputElement).value || '';
               const ariaLabel = i.getAttribute('aria-label') || '';
-              // 匹配网站标题框：有默认值且不是字体大小
-              return (val !== '' || ariaLabel === '') && ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name';
+              return val !== '' && ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name';
             }) as HTMLInputElement | undefined;
             if (titleInput) fillInput(titleInput, params.title);
             
@@ -938,18 +938,36 @@ export class GoogleSitesPublisher {
           });
           this.addLog(`填入 slug 后的按钮列表: ${JSON.stringify(allBtnInfo.slice(0, 12))}`);
           
-          // 点击发布按钮：在弹窗内找文字精确为"发布"的未禁用按钮
+          // 点击弹窗内的确认发布按钮
+          // 策略：优先在 [role="dialog"] 内找文字为"发布"的按钮，避免点到工具栏按钮
           const confirmClicked = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
-            const btn = btns.find(b => {
+            // 先尝试在 dialog 内找
+            const dialog = document.querySelector('[role="dialog"]');
+            if (dialog) {
+              const dialogBtns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+              const btn = dialogBtns.find(b => {
+                const text = b.textContent?.trim() || '';
+                const isDisabled = (b as HTMLButtonElement).disabled;
+                return !isDisabled && (text === '发布' || text === 'Publish');
+              });
+              if (btn) {
+                (btn as HTMLElement).click();
+                return `dialog:内 "${btn.textContent?.trim()}"`;
+              }
+            }
+            // 备用：全页面找，但跳过工具栏按钮（工具栏按钮 className 包含 UQuaGc）
+            const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            const btn = allBtns.find(b => {
               const text = b.textContent?.trim() || '';
               const isDisabled = (b as HTMLButtonElement).disabled;
-              if (isDisabled) return false;
-              return text === '发布' || text === 'Publish' || text === 'publish';
+              const cls = b.className || '';
+              // 排除工具栏的发布按钮（包含 UQuaGc 且不在 dialog 内）
+              if (cls.includes('UQuaGc') && !dialog?.contains(b)) return false;
+              return !isDisabled && (text === '发布' || text === 'Publish');
             });
             if (btn) {
               (btn as HTMLElement).click();
-              return btn.textContent?.trim() || 'clicked';
+              return `全页面 "${btn.textContent?.trim()}"`;
             }
             return null;
           });
