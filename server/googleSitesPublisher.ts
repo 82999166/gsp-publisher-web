@@ -796,7 +796,9 @@ export class GoogleSitesPublisher {
     
     let publishedUrl: string = '';
     let publishSuccess = false;
-    let inputFilled: { titleFilled?: boolean; titleValue?: string; urlFilled?: boolean; urlValue?: string; urlAriaLabel?: string | null } | null = null;
+    let inputFilled: { titleFilled?: boolean; titleValue?: string; urlFilled?: boolean; urlValue?: string; existingSlug?: string; urlAriaLabel?: string | null } | null = null;
+    let finalSlug: string = '';
+    let randomSlug: string = '';
     
     try {
       // 尝试找到发布按钮（右上角蓝色主按钮，文字精确为"发布"或"Publish"）
@@ -863,12 +865,12 @@ export class GoogleSitesPublisher {
           this.addLog(`页面输入框: ${JSON.stringify(inputInfo)}`);
           
           // 生成随机 slug
-          const randomSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
+          randomSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
           this.addLog(`生成随机 slug: ${randomSlug}`);
           
           // 弹窗内输入框结构：
-          //   1. 网站标题框 (value="未命名网站", 需要改成文章标题)
-          //   2. URL 网址框 (ariaLabel="网站名称", value="", 需要填 slug)
+          //   1. 网站标题框 (value="未命名网站" 或已有标题)
+          //   2. URL 网址框 (ariaLabel="网站名称"，可能已有已发布的 slug)
           //   3. 其他输入框 (字体大小等)
           inputFilled = await page.evaluate((params: { slug: string; title: string }) => {
             const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'));
@@ -882,16 +884,14 @@ export class GoogleSitesPublisher {
               input.dispatchEvent(new Event('change', { bubbles: true }));
             }
             
-            // 1. 填写网站标题框
-            // 匹配条件：value 不为空（有默认值"未命名网站"）且不是字体大小框且不是 URL 框
+            // 1. 填写网站标题框（不是 URL 框且不是字体大小框）
             const titleInput = inputs.find(i => {
-              const val = (i as HTMLInputElement).value || '';
               const ariaLabel = i.getAttribute('aria-label') || '';
-              return val !== '' && ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name';
+              return ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name' && ariaLabel !== 'Web address';
             }) as HTMLInputElement | undefined;
             if (titleInput) fillInput(titleInput, params.title);
             
-            // 2. 填写 URL 网址框（ariaLabel="网站名称"）
+            // 2. 找 URL 网址框（ariaLabel="网站名称"）
             let urlInput = inputs.find(i => {
               const ariaLabel = i.getAttribute('aria-label') || '';
               return ariaLabel === '网站名称' || ariaLabel === 'Site name' || ariaLabel === 'Web address';
@@ -904,28 +904,36 @@ export class GoogleSitesPublisher {
                 return val === '' && ariaLabel !== '字体大小' && ariaLabel !== 'Font size';
               }) as HTMLInputElement | undefined;
             }
-            if (urlInput) fillInput(urlInput, params.slug);
+            
+            // 关键修复：先读取 URL 框已有的值
+            // 如果已经有已发布的 slug，直接使用它，不覆盖
+            // 如果是空的（未发布），才填入新 slug
+            const existingSlug = urlInput ? (urlInput as HTMLInputElement).value?.trim() : '';
+            if (urlInput && !existingSlug) {
+              fillInput(urlInput as HTMLInputElement, params.slug);
+            }
+            
+            const finalSlug = urlInput ? (urlInput as HTMLInputElement).value?.trim() : params.slug;
             
             return {
               titleFilled: !!titleInput,
               titleValue: titleInput?.value,
               urlFilled: !!urlInput,
-              urlValue: urlInput?.value,
+              urlValue: finalSlug,  // 返回真实的 slug（已有的或新填的）
+              existingSlug,  // 已有的 slug（空则表示未发布过）
               urlAriaLabel: urlInput?.getAttribute('aria-label'),
             };
           }, { slug: randomSlug, title });
           this.addLog(`输入框填写结果: ${JSON.stringify(inputFilled)}`);
           
-          if ((inputFilled as any)?.urlFilled) {
-            this.addLog(`✅ 已填写标题和 slug：标题="${(inputFilled as any)?.titleValue}", slug="${randomSlug}"`);
-            await randomDelay(2500, 3500); // 等待 Google 验证 slug
+          const existingSlug = (inputFilled as any)?.existingSlug;
+          finalSlug = (inputFilled as any)?.urlValue || randomSlug;
+          if (existingSlug) {
+            this.addLog(`✅ 站点已发布过，使用已有 slug: "${existingSlug}"，标题已更新为: "${(inputFilled as any)?.titleValue}"`);
           } else {
-            this.addLog('⚠️ 未找到 URL 输入框，尝试键盘输入...');
-            await page.keyboard.press('Tab');
-            await randomDelay(300, 500);
-            await page.keyboard.type(randomSlug, { delay: 30 });
-            await randomDelay(2500, 3500);
+            this.addLog(`✅ 未发布站点，填入新 slug: "${finalSlug}"，标题: "${(inputFilled as any)?.titleValue}"`);
           }
+          await randomDelay(2500, 3500); // 等待 Google 验证
           
           // 调试：输出所有按钮信息
           const allBtnInfo = await page.evaluate(() => {
@@ -941,7 +949,7 @@ export class GoogleSitesPublisher {
           
           // 点击弹窗内的确认发布按钮
           // 策略：优先在 [role="dialog"] 内找文字为"发布"的按钮，避免点到工具栏按钮
-          const confirmClicked = await page.evaluate(() => {
+          const confirmClicked = await page.evaluate(() => {  // confirmClicked 在内部使用，无需提升
             // 先尝试在 dialog 内找
             const dialog = document.querySelector('[role="dialog"]');
             if (dialog) {
@@ -1009,13 +1017,15 @@ export class GoogleSitesPublisher {
           this.addLog('工具栏未检测到发布成功标志，继续使用填入的 slug...');
         }
         
-        // 直接使用我们填入弹窗的 randomSlug 构建真实 URL
-        // randomSlug 就是我们填入 URL 框的值，Google Sites 会用它作为发布地址
-        if ((inputFilled as any)?.urlValue) {
-          confirmedSlug = (inputFilled as any).urlValue;
+        // 使用真实的 slug 构建 URL
+        // finalSlug = 已有的 slug（已发布过）或新填入的 slug（首次发布）
+        const slugToUse = finalSlug || (inputFilled as any)?.urlValue || randomSlug;
+        if (slugToUse) {
+          confirmedSlug = slugToUse;
           publishedUrl = `https://sites.google.com/view/${confirmedSlug}/`;
           publishSuccess = true;
-          this.addLog(`✅ 发布成功！使用填入的 slug: ${confirmedSlug}，URL: ${publishedUrl}`);
+          const isExisting = !!(inputFilled as any)?.existingSlug;
+          this.addLog(`✅ 发布成功！${isExisting ? '已发布过的站点更新' : '首次发布'}，slug: ${confirmedSlug}，URL: ${publishedUrl}`);
         } else {
           // 最后回退：使用随机生成的 slug
           this.addLog('未找到 slug，发布可能失败');
