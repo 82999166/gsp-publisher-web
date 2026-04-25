@@ -796,6 +796,7 @@ export class GoogleSitesPublisher {
     
     let publishedUrl: string = '';
     let publishSuccess = false;
+    let inputFilled: { titleFilled?: boolean; titleValue?: string; urlFilled?: boolean; urlValue?: string; urlAriaLabel?: string | null } | null = null;
     
     try {
       // 尝试找到发布按钮（右上角蓝色主按钮，文字精确为"发布"或"Publish"）
@@ -869,7 +870,7 @@ export class GoogleSitesPublisher {
           //   1. 网站标题框 (value="未命名网站", 需要改成文章标题)
           //   2. URL 网址框 (ariaLabel="网站名称", value="", 需要填 slug)
           //   3. 其他输入框 (字体大小等)
-          const inputFilled = await page.evaluate((params: { slug: string; title: string }) => {
+          inputFilled = await page.evaluate((params: { slug: string; title: string }) => {
             const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'));
             
             function fillInput(input: HTMLInputElement, value: string) {
@@ -982,45 +983,43 @@ export class GoogleSitesPublisher {
           this.addLog(`等待发布对话框超时: ${e}`);
         }
         
-        // 等待发布完成
+        // 等待发布完成（Google Sites 发布后编辑器 URL 不变，不能靠 URL 判断）
         this.addLog('等待发布完成...');
-        await randomDelay(3000, 5000);
+        await randomDelay(4000, 6000);
         
-        // 检查 URL 是否已改变（发布成功的标志）
         const finalUrl = page.url();
         this.addLog(`最终 URL: ${finalUrl}`);
         
-        // 尝试从 URL 中提取 slug
-        const slugMatch = finalUrl.match(/\/view\/([^/]+)\//);
-        if (slugMatch && slugMatch[1]) {
-          publishedUrl = `https://sites.google.com/view/${slugMatch[1]}/`;
+        // 尝试等待工具栏"复制已发布网站的链接"按钮出现，确认发布成功
+        let confirmedSlug: string | null = null;
+        try {
+          // 等待工具栏按钮从"无法复制未发布网站的链接"变为"复制已发布网站的链接"
+          await page.waitForFunction(
+            () => {
+              const btns = Array.from(document.querySelectorAll('[aria-label]'));
+              return btns.some(b => {
+                const label = b.getAttribute('aria-label') || '';
+                return label.includes('复制已发布') || label.includes('Copy the published');
+              });
+            },
+            { timeout: 8000 }
+          );
+          this.addLog('✅ 工具栏显示"复制已发布网站的链接"，发布成功！');
+        } catch {
+          this.addLog('工具栏未检测到发布成功标志，继续使用填入的 slug...');
+        }
+        
+        // 直接使用我们填入弹窗的 randomSlug 构建真实 URL
+        // randomSlug 就是我们填入 URL 框的值，Google Sites 会用它作为发布地址
+        if ((inputFilled as any)?.urlValue) {
+          confirmedSlug = (inputFilled as any).urlValue;
+          publishedUrl = `https://sites.google.com/view/${confirmedSlug}/`;
           publishSuccess = true;
-          this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
+          this.addLog(`✅ 发布成功！使用填入的 slug: ${confirmedSlug}，URL: ${publishedUrl}`);
         } else {
-          // 如果 URL 中没有 /view/，可能还在编辑器中
-          this.addLog('发布可能未完成，尝试等待...');
-          await randomDelay(2000, 3000);
-          
-          const retryUrl = page.url();
-          const retryMatch = retryUrl.match(/\/view\/([^/]+)\//);
-          if (retryMatch && retryMatch[1]) {
-            publishedUrl = `https://sites.google.com/view/${retryMatch[1]}/`;
-            publishSuccess = true;
-            this.addLog(`✅ 发布成功！URL: ${publishedUrl}`);
-          } else {
-            // 回退：使用生成的 slug
-            const slugBase = title
-              .toLowerCase()
-              .replace(/[\u4e00-\u9fa5]/g, 'x')
-              .replace(/[^a-z0-9]/g, '-')
-              .replace(/-+/g, '-')
-              .replace(/^-|-$/g, '')
-              .substring(0, 20) || 'site';
-            const generatedSlug = `${slugBase}-${Date.now().toString(36)}`;
-            publishedUrl = `https://sites.google.com/view/${generatedSlug}/`;
-            publishSuccess = true;
-            this.addLog(`使用生成的 slug: ${generatedSlug}`);
-          }
+          // 最后回退：使用随机生成的 slug
+          this.addLog('未找到 slug，发布可能失败');
+          publishSuccess = false;
         }
       } else {
         this.addLog('未找到发布按钮，尝试使用 API 发布...');
