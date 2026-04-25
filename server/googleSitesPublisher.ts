@@ -374,65 +374,26 @@ export class GoogleSitesPublisher {
     };
     page.on('request', tokenHandler);
 
+    // ── 第一步：用固定站点获取 OAuth token ──────────────────────────────────────
     if (options.siteUrl) {
-      // 已有 Site，从 siteUrl 中提取 Site ID，构建根编辑器 URL
-      // 支持格式: /d/[siteId]/edit 或 /d/[siteId]/p/[pageId]/edit
+      // 从 siteUrl 中提取 Site ID，构建根编辑器 URL，仅用于捕获 token
       const siteIdMatch = options.siteUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
       let targetUrl = options.siteUrl;
       if (siteIdMatch) {
-        // 始终导航到 Site 根编辑器（而不是具体子页面），避免子页面 URL 失效
         targetUrl = `https://sites.google.com/d/${siteIdMatch[1]}/edit`;
-        this.addLog(`提取 Site ID: ${siteIdMatch[1]}，导航到根编辑器: ${targetUrl}`);
+        this.addLog(`提取 Site ID: ${siteIdMatch[1]}，导航到固定站点获取 token: ${targetUrl}`);
       } else {
-        this.addLog(`导航到已有 Site: ${targetUrl}`);
+        this.addLog(`导航到固定站点获取 token: ${targetUrl}`);
       }
       await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      // 等待编辑器完全加载（URL 应包含 /d/ 表示是编辑器页面）
-      let editorUrl = page.url();
+      const editorUrl = page.url();
       this.addLog(`导航后 URL: ${editorUrl}`);
 
       // 如果被重定向到登录页，说明 Cookie 失效
       if (editorUrl.includes('accounts.google.com') || editorUrl.includes('/signin')) {
         page.off('request', tokenHandler);
         throw new Error('导航到 Site 时被重定向到登录页，Cookie 可能已失效');
-      }
-
-      // 如果被重定向到 Sites 首页（而非编辑器），尝试从首页进入编辑器
-      const isHomePage = !editorUrl.includes('/d/') && 
-        (editorUrl === 'https://sites.google.com/' || 
-         editorUrl.startsWith('https://sites.google.com/?') ||
-         editorUrl === 'https://sites.google.com');
-      if (isHomePage) {
-        this.addLog(`⚠️ 被重定向到 Sites 首页，尝试从首页进入编辑器...`);
-        try {
-          await randomDelay(2000, 3000);
-          // 从首页查找包含 /d/.../edit 的编辑器链接
-          const siteLinks = await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a[href*="/d/"]'));
-            return links
-              .map(a => (a as HTMLAnchorElement).href)
-              .filter(h => h.includes('/d/') && h.includes('/edit'));
-          });
-          this.addLog(`首页找到编辑器链接: ${JSON.stringify(siteLinks.slice(0, 3))}`);
-          if (siteLinks.length > 0) {
-            // 优先找匹配 siteId 的链接，否则用第一个
-            const matchedLink = siteIdMatch
-              ? siteLinks.find(l => l.includes(siteIdMatch[1])) || siteLinks[0]
-              : siteLinks[0];
-            this.addLog(`导航到编辑器: ${matchedLink}`);
-            await page.goto(matchedLink, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await randomDelay(2000, 3000);
-            editorUrl = page.url();
-            this.addLog(`进入编辑器后 URL: ${editorUrl}`);
-          } else {
-            this.addLog(`⚠️ 首页未找到编辑器链接，输出页面 DOM 供调试`);
-            const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 500) || '');
-            this.addLog(`页面内容: ${bodyText}`);
-          }
-        } catch (err) {
-          this.addLog(`⚠️ 从首页进入编辑器失败: ${err}`);
-        }
       }
 
       // 等待 token 被捕获（最多 20 秒）
@@ -444,30 +405,21 @@ export class GoogleSitesPublisher {
       if (this.capturedToken) {
         this.addLog(`token 捕获成功`);
       } else {
-        this.addLog(`等待 token 超时，将尝试从页面 JavaScript 上下文提取`);
-        // 尝试从页面 JavaScript 上下文中提取 token
+        this.addLog(`等待 token 超时，尝试从页面 JS 上下文提取`);
         try {
           const tokenFromPage = await page.evaluate(() => {
-            // 方法 1: 检查 window 对象中的全局变量
             if ((window as any).token) return (window as any).token;
             if ((window as any)._token) return (window as any)._token;
-            if ((window as any).__token) return (window as any).__token;
-            
-            // 方法 2: 检查 localStorage
             const lsToken = localStorage.getItem('token');
             if (lsToken) return lsToken;
-            
-            // 方法 3: 从 URL 中提取 token
             const url = window.location.href;
             const match = url.match(/[?&]token=([^&]+)/);
             if (match && match[1]) return decodeURIComponent(match[1]);
-            
             return null;
           });
-          
           if (tokenFromPage) {
             this.capturedToken = tokenFromPage;
-            this.addLog(`✅ 从页面 JavaScript 上下文提取 token: ${tokenFromPage.slice(0, 30)}...`);
+            this.addLog(`✅ 从页面 JS 上下文提取 token: ${tokenFromPage.slice(0, 30)}...`);
           } else {
             this.addLog(`⚠️ 无法从页面中提取 token`);
           }
@@ -475,22 +427,21 @@ export class GoogleSitesPublisher {
           this.addLog(`⚠️ 从页面提取 token 失败: ${err}`);
         }
       }
-
-      page.off('request', tokenHandler);
-      editorUrl = page.url();
-      this.addLog(`编辑器最终 URL: ${editorUrl}`);
-      return editorUrl;
+    } else {
+      this.addLog('未配置固定站点 URL，跳过 token 获取步骤');
     }
 
-    // 没有配置 siteUrl，尝试从 /new 创建新站点
-    this.addLog("未配置 Site URL，导航到 Google Sites 首页创建新站点...");
-    await page.goto("https://sites.google.com/new", { waitUntil: "domcontentloaded", timeout: 30000 });
+    page.off('request', tokenHandler);
+
+    // ── 第二步：每次都创建全新的 Google Sites 站点 ────────────────────────────────
+    this.addLog('导航到 Google Sites 创建全新站点...');
+    await page.goto('https://sites.google.com/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await randomDelay(2000, 3000);
 
     const newPageUrl = page.url();
     this.addLog(`当前 URL: ${newPageUrl}`);
 
-    // 如果还在 /new 页面，需要点击空白模板
+    // 如果还在 /new 页面（模板选择页），需要点击空白模板
     if (newPageUrl.includes('/new') || !newPageUrl.includes('/d/')) {
       this.addLog('在模板选择页，尝试点击空白模板...');
 
@@ -505,7 +456,7 @@ export class GoogleSitesPublisher {
             class: el.className?.slice(0, 50),
           }));
         });
-        this.addLog(`页面 DOM 调试（前20个可点击元素）: ${JSON.stringify(clickables)}`);
+        this.addLog(`模板选择页可点击元素: ${JSON.stringify(clickables)}`);
       } catch {}
 
       // 尝试多种选择器点击空白模板
@@ -514,7 +465,6 @@ export class GoogleSitesPublisher {
         '[aria-label="空白"]',
         '[data-id="blank"]',
         '[jsname="blank"]',
-        'div[role="button"]:first-child',
       ];
 
       let clicked = false;
@@ -531,7 +481,7 @@ export class GoogleSitesPublisher {
       }
 
       if (!clicked) {
-        // 尝试通过文字查找
+        // 通过文字查找
         try {
           const found = await page.evaluate(() => {
             const els = Array.from(document.querySelectorAll('[role="button"], div[tabindex="0"]'));
@@ -550,25 +500,35 @@ export class GoogleSitesPublisher {
       }
 
       if (clicked) {
-        // 等待跳转到编辑器（URL 包含 /d/）
+        // 等待跳转到新站点编辑器（URL 包含 /d/）
         try {
           await page.waitForFunction(
             () => window.location.href.includes('/d/'),
-            { timeout: 20000 }
+            { timeout: 25000 }
           );
-          this.addLog('已跳转到编辑器');
+          this.addLog('✅ 已跳转到新站点编辑器');
         } catch {
-          this.addLog('等待跳转到编辑器超时');
+          this.addLog('⚠️ 等待跳转到编辑器超时');
         }
       } else {
-        this.addLog('未能点击空白模板，请在账号设置中配置 defaultSiteUrl');
-        throw new Error('未配置 Google Site 编辑器地址。请在账号管理中编辑账号，填写「Google Site 编辑器地址」字段。');
+        this.addLog('⚠️ 未能点击空白模板');
+        // 如果无法新建站点，回退到固定站点（如果有配置）
+        if (options.siteUrl) {
+          this.addLog('回退：使用固定站点编辑器');
+          const siteIdMatch = options.siteUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          const fallbackUrl = siteIdMatch
+            ? `https://sites.google.com/d/${siteIdMatch[1]}/edit`
+            : options.siteUrl;
+          await page.goto(fallbackUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        } else {
+          throw new Error('无法创建新 Google Sites 站点，且未配置固定站点 URL');
+        }
       }
     }
 
-    const currentUrl = page.url();
-    this.addLog(`当前 URL: ${currentUrl}`);
-    return currentUrl;
+    const newSiteUrl = page.url();
+    this.addLog(`✅ 新站点编辑器 URL: ${newSiteUrl}`);
+    return newSiteUrl;
   }
 
   /** 在 Google Sites 中创建新页面并填入内容 */
@@ -796,15 +756,12 @@ export class GoogleSitesPublisher {
     
     let publishedUrl: string = '';
     let publishSuccess = false;
-    let inputFilled: { titleFilled?: boolean; titleValue?: string; urlFilled?: boolean; urlValue?: string; existingSlug?: string; urlAriaLabel?: string | null } | null = null;
-    let finalSlug: string = '';
-    let randomSlug: string = '';
+    let usedSlug: string = '';
     
     try {
       // 尝试找到发布按钮（右上角蓝色主按钮，文字精确为"发布"或"Publish"）
       const publishBtnInfo = await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-        // 优先匹配文字精确为"发布"或"Publish"的按钮（排除 ariaLabel 包含发布的工具栏按钮）
         const btn = buttons.find(b => {
           const text = b.textContent?.trim() || '';
           return text === '发布' || text === 'Publish' || text === 'publish';
@@ -829,10 +786,8 @@ export class GoogleSitesPublisher {
         await randomDelay(2000, 3000);
         
         // 等待发布对话框（"发布到网络" 弹窗）
-        // Google Sites 弹窗可能用多种容器
         this.addLog('等待发布对话框...');
         try {
-          // 尝试多种弹窗选择器
           await page.waitForSelector(
             '[role="dialog"], [data-dialog], .VfPpkd-P5QLlc, .VfPpkd-xl07Ob-XxIAqe, [jsname="haAclf"]',
             { timeout: 8000 }
@@ -850,29 +805,13 @@ export class GoogleSitesPublisher {
           });
           this.addLog(`弹窗内容: ${JSON.stringify(dialogInfo)}`);
           
-          // 找到弹窗内的输入框
-          const inputInfo = await page.evaluate(() => {
-            const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type]), [contenteditable="true"]'));
-            return inputs.map(i => ({
-              tag: i.tagName,
-              type: (i as HTMLInputElement).type,
-              placeholder: (i as HTMLInputElement).placeholder,
-              value: (i as HTMLInputElement).value,
-              ariaLabel: i.getAttribute('aria-label'),
-              className: i.className?.slice(0, 40),
-            }));
-          });
-          this.addLog(`页面输入框: ${JSON.stringify(inputInfo)}`);
+          // 生成随机 slug（全新站点，URL 框必然为空）
+          const newSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
+          this.addLog(`生成随机 slug: ${newSlug}`);
+          usedSlug = newSlug;
           
-          // 生成随机 slug
-          randomSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
-          this.addLog(`生成随机 slug: ${randomSlug}`);
-          
-          // 弹窗内输入框结构：
-          //   1. 网站标题框 (value="未命名网站" 或已有标题)
-          //   2. URL 网址框 (ariaLabel="网站名称"，可能已有已发布的 slug)
-          //   3. 其他输入框 (字体大小等)
-          inputFilled = await page.evaluate((params: { slug: string; title: string }) => {
+          // 填写弹窗内的输入框：标题框填文章标题，URL 框填随机 slug
+          const fillResult = await page.evaluate((params: { slug: string; title: string }) => {
             const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'));
             
             function fillInput(input: HTMLInputElement, value: string) {
@@ -884,19 +823,19 @@ export class GoogleSitesPublisher {
               input.dispatchEvent(new Event('change', { bubbles: true }));
             }
             
-            // 1. 填写网站标题框（不是 URL 框且不是字体大小框）
+            // 1. 标题框：不是 URL 框且不是字体大小框
             const titleInput = inputs.find(i => {
               const ariaLabel = i.getAttribute('aria-label') || '';
-              return ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name' && ariaLabel !== 'Web address';
+              return ariaLabel !== '字体大小' && ariaLabel !== 'Font size' 
+                && ariaLabel !== '网站名称' && ariaLabel !== 'Site name' && ariaLabel !== 'Web address';
             }) as HTMLInputElement | undefined;
             if (titleInput) fillInput(titleInput, params.title);
             
-            // 2. 找 URL 网址框（ariaLabel="网站名称"）
+            // 2. URL 框：ariaLabel="网站名称" 或备用空值框
             let urlInput = inputs.find(i => {
               const ariaLabel = i.getAttribute('aria-label') || '';
               return ariaLabel === '网站名称' || ariaLabel === 'Site name' || ariaLabel === 'Web address';
             }) as HTMLInputElement | undefined;
-            // 备用：找 value 为空且不是字体大小的输入框
             if (!urlInput) {
               urlInput = inputs.find(i => {
                 const val = (i as HTMLInputElement).value || '';
@@ -904,53 +843,24 @@ export class GoogleSitesPublisher {
                 return val === '' && ariaLabel !== '字体大小' && ariaLabel !== 'Font size';
               }) as HTMLInputElement | undefined;
             }
-            
-            // 关键修复：先读取 URL 框已有的值
-            // 如果已经有已发布的 slug，直接使用它，不覆盖
-            // 如果是空的（未发布），才填入新 slug
-            const existingSlug = urlInput ? (urlInput as HTMLInputElement).value?.trim() : '';
-            if (urlInput && !existingSlug) {
-              fillInput(urlInput as HTMLInputElement, params.slug);
-            }
-            
-            const finalSlug = urlInput ? (urlInput as HTMLInputElement).value?.trim() : params.slug;
+            // 全新站点，直接填入新 slug
+            if (urlInput) fillInput(urlInput as HTMLInputElement, params.slug);
             
             return {
               titleFilled: !!titleInput,
               titleValue: titleInput?.value,
               urlFilled: !!urlInput,
-              urlValue: finalSlug,  // 返回真实的 slug（已有的或新填的）
-              existingSlug,  // 已有的 slug（空则表示未发布过）
-              urlAriaLabel: urlInput?.getAttribute('aria-label'),
+              urlValue: (urlInput as HTMLInputElement | undefined)?.value,
             };
-          }, { slug: randomSlug, title });
-          this.addLog(`输入框填写结果: ${JSON.stringify(inputFilled)}`);
+          }, { slug: newSlug, title });
+          this.addLog(`输入框填写结果: ${JSON.stringify(fillResult)}`);
+          this.addLog(`✅ 全新站点，填入 slug: "${newSlug}"，标题: "${fillResult.titleValue}"`);
           
-          const existingSlug = (inputFilled as any)?.existingSlug;
-          finalSlug = (inputFilled as any)?.urlValue || randomSlug;
-          if (existingSlug) {
-            this.addLog(`✅ 站点已发布过，使用已有 slug: "${existingSlug}"，标题已更新为: "${(inputFilled as any)?.titleValue}"`);
-          } else {
-            this.addLog(`✅ 未发布站点，填入新 slug: "${finalSlug}"，标题: "${(inputFilled as any)?.titleValue}"`);
-          }
-          await randomDelay(2500, 3500); // 等待 Google 验证
-          
-          // 调试：输出所有按钮信息
-          const allBtnInfo = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
-            return btns.slice(0, 15).map(b => ({
-              text: b.textContent?.trim().slice(0, 30),
-              ariaLabel: b.getAttribute('aria-label'),
-              disabled: (b as HTMLButtonElement).disabled,
-              className: b.className?.slice(0, 50),
-            }));
-          });
-          this.addLog(`填入 slug 后的按钮列表: ${JSON.stringify(allBtnInfo.slice(0, 12))}`);
+          await randomDelay(2500, 3500); // 等待 Google 验证 slug 可用性
           
           // 点击弹窗内的确认发布按钮
-          // 策略：优先在 [role="dialog"] 内找文字为"发布"的按钮，避免点到工具栏按钮
-          const confirmClicked = await page.evaluate(() => {  // confirmClicked 在内部使用，无需提升
-            // 先尝试在 dialog 内找
+          const confirmResult = await page.evaluate(() => {
+            // 优先在 dialog 内找
             const dialog = document.querySelector('[role="dialog"]');
             if (dialog) {
               const dialogBtns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
@@ -961,16 +871,15 @@ export class GoogleSitesPublisher {
               });
               if (btn) {
                 (btn as HTMLElement).click();
-                return `dialog:内 "${btn.textContent?.trim()}"`;
+                return `dialog内 "${btn.textContent?.trim()}"`;
               }
             }
-            // 备用：全页面找，但跳过工具栏按钮（工具栏按钮 className 包含 UQuaGc）
+            // 备用：全页面找，跳过工具栏按钮（className 含 UQuaGc）
             const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
             const btn = allBtns.find(b => {
               const text = b.textContent?.trim() || '';
               const isDisabled = (b as HTMLButtonElement).disabled;
               const cls = b.className || '';
-              // 排除工具栏的发布按钮（包含 UQuaGc 且不在 dialog 内）
               if (cls.includes('UQuaGc') && !dialog?.contains(b)) return false;
               return !isDisabled && (text === '发布' || text === 'Publish');
             });
@@ -981,27 +890,22 @@ export class GoogleSitesPublisher {
             return null;
           });
           
-          if (confirmClicked) {
-            this.addLog(`✅ 已点击弹窗内发布按钮: "${confirmClicked}"`);
+          if (confirmResult) {
+            this.addLog(`✅ 已点击弹窗内发布按钮: "${confirmResult}"`);
           } else {
-            this.addLog('⚠️ 未找到弹窗内发布按钮，尝试 API 发布...');
+            this.addLog('⚠️ 未找到弹窗内发布按钮');
           }
           
         } catch (e) {
           this.addLog(`等待发布对话框超时: ${e}`);
         }
         
-        // 等待发布完成（Google Sites 发布后编辑器 URL 不变，不能靠 URL 判断）
+        // 等待发布完成
         this.addLog('等待发布完成...');
         await randomDelay(4000, 6000);
         
-        const finalUrl = page.url();
-        this.addLog(`最终 URL: ${finalUrl}`);
-        
         // 尝试等待工具栏"复制已发布网站的链接"按钮出现，确认发布成功
-        let confirmedSlug: string | null = null;
         try {
-          // 等待工具栏按钮从"无法复制未发布网站的链接"变为"复制已发布网站的链接"
           await page.waitForFunction(
             () => {
               const btns = Array.from(document.querySelectorAll('[aria-label]'));
@@ -1017,17 +921,12 @@ export class GoogleSitesPublisher {
           this.addLog('工具栏未检测到发布成功标志，继续使用填入的 slug...');
         }
         
-        // 使用真实的 slug 构建 URL
-        // finalSlug = 已有的 slug（已发布过）或新填入的 slug（首次发布）
-        const slugToUse = finalSlug || (inputFilled as any)?.urlValue || randomSlug;
-        if (slugToUse) {
-          confirmedSlug = slugToUse;
-          publishedUrl = `https://sites.google.com/view/${confirmedSlug}/`;
+        // 使用填入的 slug 构建真实 URL
+        if (usedSlug) {
+          publishedUrl = `https://sites.google.com/view/${usedSlug}/`;
           publishSuccess = true;
-          const isExisting = !!(inputFilled as any)?.existingSlug;
-          this.addLog(`✅ 发布成功！${isExisting ? '已发布过的站点更新' : '首次发布'}，slug: ${confirmedSlug}，URL: ${publishedUrl}`);
+          this.addLog(`✅ 发布完成，slug: ${usedSlug}，URL: ${publishedUrl}`);
         } else {
-          // 最后回退：使用随机生成的 slug
           this.addLog('未找到 slug，发布可能失败');
           publishSuccess = false;
         }
