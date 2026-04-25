@@ -129,6 +129,14 @@ export default function AIContent() {
     onError: (e) => toast.error(e.message),
   });
 
+  const batchDeleteKwMutation = trpc.content.keywords.batchDelete.useMutation({
+    onSuccess: () => {
+      utils.content.keywords.list.invalidate();
+      setSelectedIds([]);
+      toast.success("批量删除成功");
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const deleteMutation = trpc.content.keywords.delete.useMutation({
     onSuccess: () => {
       utils.content.keywords.list.invalidate();
@@ -293,15 +301,26 @@ export default function AIContent() {
                   </span>
                 )}
               </h2>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1"
-                onClick={() => setBatchDialogOpen(true)}
-              >
-                <Plus className="h-3 w-3" />
-                批量添加
-              </Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1 border-purple-300 text-purple-600 hover:bg-purple-50"
+                  onClick={() => setLongTailDialogOpen(true)}
+                >
+                  <Sparkles className="h-3 w-3" />
+                  生成长尾词
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setBatchDialogOpen(true)}
+                >
+                  <Plus className="h-3 w-3" />
+                  批量添加
+                </Button>
+              </div>
             </div>
 
             {/* Add single keyword */}
@@ -345,20 +364,36 @@ export default function AIContent() {
                 {selectedIds.length > 0 && (
                   <>
                     <span className="text-xs text-muted-foreground">已选 {selectedIds.length} 个</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-xs gap-1 ml-auto"
-                      onClick={handleBatchAnalyze}
-                      disabled={batchAnalyzeMutation.isPending}
-                    >
-                      {batchAnalyzeMutation.isPending ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <BarChart2 className="h-3 w-3" />
-                      )}
-                      批量分析
-                    </Button>
+                    <div className="flex items-center gap-1 ml-auto">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs gap-1"
+                        onClick={handleBatchAnalyze}
+                        disabled={batchAnalyzeMutation.isPending}
+                      >
+                        {batchAnalyzeMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <BarChart2 className="h-3 w-3" />
+                        )}
+                        批量分析
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-6 text-xs gap-1"
+                        onClick={() => {
+                          if (confirm(`确认删除选中的 ${selectedIds.length} 个关键词？`)) {
+                            batchDeleteKwMutation.mutate({ ids: selectedIds });
+                          }
+                        }}
+                        disabled={batchDeleteKwMutation.isPending}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        批量删除
+                      </Button>
+                    </div>
                   </>
                 )}
               </div>

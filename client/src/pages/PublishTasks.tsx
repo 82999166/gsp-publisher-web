@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Task = {
   id: number;
@@ -72,6 +73,28 @@ const statusClass: Record<string, string> = {
 
 export default function PublishTasks() {
   const utils = trpc.useUtils();
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMutation = trpc.tasks.batchDelete.useMutation({
+    onSuccess: () => {
+      utils.tasks.list.invalidate();
+      setSelectedIds(new Set());
+      toast.success("批量删除成功");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAll(taskList: Task[]) {
+    if (selectedIds.size === taskList.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(taskList.map(t => t.id)));
+  }
+  function handleBatchDelete(taskList: Task[]) {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 个任务？`)) {
+      batchDeleteMutation.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
   const { data: tasks = [], isLoading, refetch } = trpc.tasks.list.useQuery(undefined, {
     refetchInterval: 4000, // 每4秒自动刷新
   });
@@ -241,6 +264,18 @@ export default function PublishTasks() {
           >
             <HelpCircle className="h-4 w-4" />
           </button>
+          {selectedIds.size > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={() => handleBatchDelete(tasks as Task[])}
+              disabled={batchDeleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <Button onClick={() => setDialogOpen(true)} size="sm" className="gap-2">
             <Plus className="h-4 w-4" />
             新建任务
@@ -289,6 +324,12 @@ export default function PublishTasks() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={(tasks as Task[]).length > 0 && selectedIds.size === (tasks as Task[]).length}
+                    onCheckedChange={() => toggleSelectAll(tasks as Task[])}
+                  />
+                </TableHead>
                 <TableHead>任务名称</TableHead>
                 <TableHead>账号</TableHead>
                 <TableHead>状态</TableHead>
@@ -304,7 +345,13 @@ export default function PublishTasks() {
                 const account = (accounts as any[]).find((a: any) => a.id === task.accountId);
                 const isThisExecuting = pollingTaskId === task.id;
                 return (
-                  <TableRow key={task.id} className={isThisExecuting ? "bg-blue-50/50" : ""}>
+                  <TableRow key={task.id} className={isThisExecuting ? "bg-blue-50/50" : selectedIds.has(task.id) ? "bg-muted/50" : ""}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedIds.has(task.id)}
+                        onCheckedChange={() => toggleSelect(task.id)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div className="font-medium text-foreground text-sm">{task.name}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">#{task.id}</div>

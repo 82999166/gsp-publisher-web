@@ -46,6 +46,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { OAuthAuthorizationButton } from "@/components/OAuthAuthorizationButton";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Account = {
   id: number;
@@ -164,6 +165,28 @@ function ProxyBadge({ proxy }: { proxy: any }) {
 export default function Accounts() {
   const utils = trpc.useUtils();
   const { data: accounts = [], isLoading } = trpc.accounts.list.useQuery();
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMutation = trpc.accounts.batchDelete.useMutation({
+    onSuccess: () => {
+      utils.accounts.list.invalidate();
+      setSelectedIds(new Set());
+      toast.success("批量删除成功");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAll() {
+    if (selectedIds.size === accounts.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(accounts.map(a => a.id)));
+  }
+  function handleBatchDelete() {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 个账号？`)) {
+      batchDeleteMutation.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
   const createMutation = trpc.accounts.create.useMutation({
     onSuccess: () => {
       utils.accounts.list.invalidate();
@@ -341,6 +364,18 @@ export default function Accounts() {
           <p className="text-sm text-muted-foreground mt-1">管理 Google Sites 账号，配置独立代理和浏览器指纹防关联</p>
         </div>
         <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={handleBatchDelete}
+              disabled={batchDeleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <HelpTooltip />
           <Button onClick={() => setDialogOpen(true)} size="sm" className="gap-2">
             <Plus className="h-4 w-4" />
@@ -378,6 +413,12 @@ export default function Accounts() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={accounts.length > 0 && selectedIds.size === accounts.length}
+                    onCheckedChange={toggleSelectAll}
+                  />
+                </TableHead>
                 <TableHead>账号名称</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>代理 IP</TableHead>
@@ -390,7 +431,13 @@ export default function Accounts() {
             </TableHeader>
             <TableBody>
               {accounts.map((account) => (
-                <TableRow key={account.id}>
+                <TableRow key={account.id} className={selectedIds.has(account.id) ? "bg-muted/50" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={selectedIds.has(account.id)}
+                      onCheckedChange={() => toggleSelect(account.id)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <div className="font-medium text-foreground">{account.name}</div>
                     {account.email && (

@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type IndexRecord = {
   id: number;
@@ -105,6 +106,28 @@ export default function Indexing() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMutation = trpc.indexing.batchDelete.useMutation({
+    onSuccess: () => {
+      utils.indexing.list.invalidate();
+      setSelectedIds(new Set());
+      toast.success("批量删除成功");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelectRecord(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAllRecords() {
+    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filtered.map(r => r.id)));
+  }
+  function handleBatchDeleteRecords() {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 条监控记录？`)) {
+      batchDeleteMutation.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
 
   const filtered = (records as IndexRecord[]).filter(r =>
     !searchKw || (r.publishedUrl.includes(searchKw) || (r.keyword ?? "").includes(searchKw))
@@ -147,6 +170,18 @@ export default function Indexing() {
             )}
             批量检测
           </Button>
+          {selectedIds.size > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={handleBatchDeleteRecords}
+              disabled={batchDeleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <Button size="sm" className="gap-2" onClick={() => setAddDialogOpen(true)}>
             <Plus className="h-4 w-4" />
             添加URL
@@ -213,6 +248,12 @@ export default function Indexing() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                    onCheckedChange={toggleSelectAllRecords}
+                  />
+                </TableHead>
                 <TableHead>URL</TableHead>
                 <TableHead>关键词</TableHead>
                 <TableHead>收录状态</TableHead>
@@ -225,7 +266,13 @@ export default function Indexing() {
             </TableHeader>
             <TableBody>
               {filtered.map((record: IndexRecord) => (
-                <TableRow key={record.id}>
+                <TableRow key={record.id} className={selectedIds.has(record.id) ? "bg-muted/50" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={selectedIds.has(record.id)}
+                      onCheckedChange={() => toggleSelectRecord(record.id)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <a

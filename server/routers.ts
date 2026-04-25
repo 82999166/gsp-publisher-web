@@ -5,19 +5,19 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import {
-  getAccounts, getAccountById, createAccount, updateAccount, deleteAccount,
+  getAccounts, getAccountById, createAccount, updateAccount, deleteAccount, batchDeleteAccounts,
   getMaterials, getMaterialById, createMaterial, updateMaterial, deleteMaterial,
-  getPublishTasks, createPublishTask, updatePublishTask, deletePublishTask,
-  getHyperlinks, createHyperlink, updateHyperlink, deleteHyperlink, seedPresetHyperlinks,
-  getIndexingRecords, createIndexingRecord, updateIndexingRecord, deleteIndexingRecord,
+  getPublishTasks, createPublishTask, updatePublishTask, deletePublishTask, batchDeletePublishTasks,
+  getHyperlinks, createHyperlink, updateHyperlink, deleteHyperlink, seedPresetHyperlinks, batchDeleteHyperlinks,
+  getIndexingRecords, createIndexingRecord, updateIndexingRecord, deleteIndexingRecord, batchDeleteIndexingRecords,
   getSettings, getSettingByKey, upsertSetting, seedDefaultSettings,
-  getKeywords, createKeyword, updateKeyword, deleteKeyword,
+  getKeywords, createKeyword, updateKeyword, deleteKeyword, batchDeleteKeywords,
   getDashboardStats,
   getSeoTemplates, getSeoTemplateById, createSeoTemplate, updateSeoTemplate, deleteSeoTemplate, seedSeoTemplates,
   getGoogleSites, getGoogleSiteById, createGoogleSite, updateGoogleSite, deleteGoogleSite,
-  getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch,
+  getGenerationBatches, getGenerationBatchById, createGenerationBatch, updateGenerationBatch, deleteGenerationBatch, batchDeleteGenerationBatches,
   getGenerationItemsByBatch, createGenerationItems, updateGenerationItem, getPendingGenerationItems, countGenerationItems,
-  getPublishedPages, countPublishedPages, createPublishedPage, updatePublishedPage, deletePublishedPage, getPublishedPageStats,
+  getPublishedPages, countPublishedPages, createPublishedPage, updatePublishedPage, deletePublishedPage, getPublishedPageStats, batchDeletePublishedPages,
   createLog, getLogs, getLogCount, clearLogs,
   getPublishTaskById,
 } from "./db";
@@ -173,6 +173,11 @@ const accountsRouter = router({
     const accToDel = await getAccountById(input.id);
     await deleteAccount(input.id);
     await createLog({ level: "warn", category: "account", title: `删除账号：${accToDel?.name ?? input.id}`, message: `账号 #${input.id} 已删除`, entityType: "account", entityId: input.id });
+    return { success: true };
+  }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    await batchDeleteAccounts(input.ids);
+    await createLog({ level: "warn", category: "account", title: `批量删除账号 ${input.ids.length} 个`, message: `账号 IDs: ${input.ids.join(", ")}` });
     return { success: true };
   }),
   verify: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
@@ -358,6 +363,10 @@ const contentRouter = router({
 
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
       await deleteKeyword(input.id);
+      return { success: true };
+    }),
+    batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+      await batchDeleteKeywords(input.ids);
       return { success: true };
     }),
 
@@ -717,6 +726,11 @@ const tasksRouter = router({
     await createLog({ level: "warn", category: "publish", title: `删除发布任务 #${input.id}`, entityType: "task", entityId: input.id });
     return { success: true };
   }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    await batchDeletePublishTasks(input.ids);
+    await createLog({ level: "warn", category: "publish", title: `批量删除发布任务 ${input.ids.length} 个`, message: `IDs: ${input.ids.join(", ")}` });
+    return { success: true };
+  }),
 });
 
 // ─── Hyperlinks ───────────────────────────────────────────────────────────────
@@ -760,6 +774,10 @@ const hyperlinksRouter = router({
 
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     await deleteHyperlink(input.id);
+    return { success: true };
+  }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    await batchDeleteHyperlinks(input.ids);
     return { success: true };
   }),
 });
@@ -840,6 +858,10 @@ const indexingRouter = router({
 
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     await deleteIndexingRecord(input.id);
+    return { success: true };
+  }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    await batchDeleteIndexingRecords(input.ids);
     return { success: true };
   }),
 });
@@ -1644,6 +1666,18 @@ const batchGenerationRouter = router({
     await createLog({ level: "warn", category: "batch", title: `删除批量任务 #${input.id}`, entityType: "batch", entityId: input.id });
     return { success: true };
   }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    for (const id of input.ids) {
+      if (workerState[id]) {
+        workerState[id].running = false;
+        if (workerState[id].timer) clearTimeout(workerState[id].timer);
+        delete workerState[id];
+      }
+    }
+    await batchDeleteGenerationBatches(input.ids);
+    await createLog({ level: "warn", category: "batch", title: `批量删除生成任务 ${input.ids.length} 个`, message: `IDs: ${input.ids.join(", ")}` });
+    return { success: true };
+  }),
 
   progress: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const batch = await getGenerationBatchById(input.id);
@@ -1708,6 +1742,10 @@ const publishedPagesRouter = router({
   }),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     await deletePublishedPage(input.id);
+    return { success: true };
+  }),
+  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
+    await batchDeletePublishedPages(input.ids);
     return { success: true };
   }),
   exportCsv: protectedProcedure.input(z.object({

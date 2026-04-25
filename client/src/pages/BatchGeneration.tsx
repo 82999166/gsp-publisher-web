@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ImportItem {
@@ -201,6 +202,29 @@ export default function BatchGeneration() {
   const [newAnchor, setNewAnchor] = useState<AnchorLink>({ anchorText: "", url: "", position: "body" });
 
   const { data: batches, refetch } = trpc.batchGeneration.list.useQuery();
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMut = trpc.batchGeneration.batchDelete.useMutation({
+    onSuccess: () => {
+      toast.success("批量删除成功");
+      setSelectedIds(new Set());
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelectBatch(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAllBatches() {
+    if (!batches) return;
+    if (selectedIds.size === batches.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(batches.map(b => b.id)));
+  }
+  function handleBatchDeleteBatches() {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 个批次？`)) {
+      batchDeleteMut.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
   const createMut = trpc.batchGeneration.create.useMutation({
     onSuccess: (data) => {
       toast.success(`批次创建成功，共 ${data.totalCount} 条任务`);
@@ -294,6 +318,11 @@ export default function BatchGeneration() {
               "设置质量分阈值后，达标的文章自动进入发布队列",
             ]}
           />
+          {selectedIds.size > 0 && (
+            <Button variant="destructive" onClick={handleBatchDeleteBatches} disabled={batchDeleteMut.isPending} className="gap-2">
+              <Trash2 className="h-4 w-4" /> 批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <Button onClick={() => { setShowCreate(true); setStep("import"); }} className="gap-2">
             <Plus className="h-4 w-4" /> 新建批次
           </Button>
@@ -630,9 +659,28 @@ export default function BatchGeneration() {
             <p className="text-xs mt-1">点击「新建批次」导入关键词开始批量生成</p>
           </div>
         ) : (
-          batches.map(batch => (
-            <BatchRow key={batch.id} batch={batch} onRefresh={refetch} />
-          ))
+          <>
+            <div className="flex items-center gap-2 px-2 pb-1">
+              <Checkbox
+                checked={batches.length > 0 && selectedIds.size === batches.length}
+                onCheckedChange={toggleSelectAllBatches}
+              />
+              <span className="text-xs text-muted-foreground">全选</span>
+            </div>
+            {batches.map(batch => (
+              <div key={batch.id} className="flex items-start gap-2">
+                <div className="pt-4 pl-1">
+                  <Checkbox
+                    checked={selectedIds.has(batch.id)}
+                    onCheckedChange={() => toggleSelectBatch(batch.id)}
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <BatchRow batch={batch} onRefresh={refetch} />
+                </div>
+              </div>
+            ))}
+          </>
         )}
       </div>
     </div>

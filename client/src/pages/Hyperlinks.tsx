@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Hyperlink = {
   id: number;
@@ -110,6 +111,28 @@ export default function Hyperlinks() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMutation = trpc.hyperlinks.batchDelete.useMutation({
+    onSuccess: () => {
+      utils.hyperlinks.list.invalidate();
+      setSelectedIds(new Set());
+      toast.success("批量删除成功");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelectLink(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAllLinks(list: Hyperlink[]) {
+    if (selectedIds.size === list.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(list.map(h => h.id)));
+  }
+  function handleBatchDeleteLinks(list: Hyperlink[]) {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 条超链接？`)) {
+      batchDeleteMutation.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
 
   function resetForm() {
     setForm({
@@ -144,6 +167,7 @@ export default function Hyperlinks() {
 
   const internalLinks = (hyperlinks as Hyperlink[]).filter(h => h.type === "internal");
   const externalLinks = (hyperlinks as Hyperlink[]).filter(h => h.type === "external");
+  const filteredLinks = typeFilter === "all" ? (hyperlinks as Hyperlink[]) : typeFilter === "internal" ? internalLinks : externalLinks;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -159,6 +183,18 @@ export default function Hyperlinks() {
           >
             <HelpCircle className="h-4 w-4" />
           </button>
+          {selectedIds.size > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={() => handleBatchDeleteLinks(filteredLinks)}
+              disabled={batchDeleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <Button onClick={() => setDialogOpen(true)} size="sm" className="gap-2">
             <Plus className="h-4 w-4" />
             添加链接
@@ -208,6 +244,12 @@ export default function Hyperlinks() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={filteredLinks.length > 0 && selectedIds.size === filteredLinks.length}
+                    onCheckedChange={() => toggleSelectAllLinks(filteredLinks)}
+                  />
+                </TableHead>
                 <TableHead>类型</TableHead>
                 <TableHead>链接/域名</TableHead>
                 <TableHead>锁文本</TableHead>
@@ -220,7 +262,13 @@ export default function Hyperlinks() {
             </TableHeader>
             <TableBody>
               {(hyperlinks as Hyperlink[]).map((link) => (
-                <TableRow key={link.id}>
+                <TableRow key={link.id} className={selectedIds.has(link.id) ? "bg-muted/50" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={selectedIds.has(link.id)}
+                      onCheckedChange={() => toggleSelectLink(link.id)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
                       link.type === "internal"

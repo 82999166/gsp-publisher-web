@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -41,6 +42,29 @@ const indexStatusMap: Record<IndexStatus, { label: string; color: string }> = {
 export default function PublishedPages() {
   const [keyword, setKeyword] = useState("");
   const [indexStatus, setIndexStatus] = useState<string>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const batchDeleteMut = trpc.publishedPages.batchDelete.useMutation({
+    onSuccess: () => {
+      toast.success("批量删除成功");
+      setSelectedIds(new Set());
+      utils.publishedPages.list.invalidate();
+      utils.publishedPages.stats.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleSelectAll() {
+    if (selectedIds.size === pages.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(pages.map((p: any) => p.id)));
+  }
+  function handleBatchDelete() {
+    if (selectedIds.size === 0) return;
+    if (confirm(`确认删除选中的 ${selectedIds.size} 条记录？`)) {
+      batchDeleteMut.mutate({ ids: Array.from(selectedIds) });
+    }
+  }
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [addForm, setAddForm] = useState({
     title: "",
@@ -123,6 +147,12 @@ export default function PublishedPages() {
           <p className="text-muted-foreground text-sm mt-1">管理所有已发布的 Google Sites 页面，支持导出和收录状态追踪</p>
         </div>
         <div className="flex gap-2">
+          {selectedIds.size > 0 && (
+            <Button variant="destructive" onClick={handleBatchDelete} disabled={batchDeleteMut.isPending}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
           <Button variant="outline" onClick={handleExport}>
             <Download className="w-4 h-4 mr-2" />
             导出 CSV
@@ -185,6 +215,12 @@ export default function PublishedPages() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={pages.length > 0 && selectedIds.size === pages.length}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead className="w-12">ID</TableHead>
                   <TableHead>标题</TableHead>
                   <TableHead className="w-32">关键词</TableHead>
@@ -199,14 +235,14 @@ export default function PublishedPages() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                       <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                       加载中...
                     </TableCell>
                   </TableRow>
                 ) : pages.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                       暂无发布记录
                       <br />
                       <span className="text-xs">发布任务完成后，链接将自动保存到这里</span>
@@ -216,7 +252,13 @@ export default function PublishedPages() {
                   pages.map((page: any) => {
                     const statusInfo = indexStatusMap[page.indexStatus as IndexStatus] ?? indexStatusMap.unknown;
                     return (
-                      <TableRow key={page.id}>
+                      <TableRow key={page.id} className={selectedIds.has(page.id) ? "bg-muted/50" : ""}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedIds.has(page.id)}
+                            onCheckedChange={() => toggleSelect(page.id)}
+                          />
+                        </TableCell>
                         <TableCell className="text-muted-foreground text-xs">{page.id}</TableCell>
                         <TableCell>
                           <div className="max-w-xs">

@@ -1,4 +1,4 @@
-import { eq, desc, and, like, count, sql } from "drizzle-orm";
+import { eq, desc, and, like, count, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -101,6 +101,12 @@ export async function deleteAccount(id: number) {
   if (!db) throw new Error("DB not available");
   await db.delete(accounts).where(eq(accounts.id, id));
 }
+export async function batchDeleteAccounts(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(accounts).where(inArray(accounts.id, ids));
+}
 
 // ─── Materials ────────────────────────────────────────────────────────────────
 export async function getMaterials(filters?: { status?: string; keyword?: string }) {
@@ -169,6 +175,12 @@ export async function deletePublishTask(id: number) {
   if (!db) throw new Error("DB not available");
   await db.delete(publishTasks).where(eq(publishTasks.id, id));
 }
+export async function batchDeletePublishTasks(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(publishTasks).where(inArray(publishTasks.id, ids));
+}
 
 // ─── Hyperlinks ───────────────────────────────────────────────────────────────
 export async function getHyperlinks(type?: string) {
@@ -196,6 +208,12 @@ export async function deleteHyperlink(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(hyperlinks).where(eq(hyperlinks.id, id));
+}
+export async function batchDeleteHyperlinks(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(hyperlinks).where(inArray(hyperlinks.id, ids));
 }
 
 export async function seedPresetHyperlinks() {
@@ -243,6 +261,12 @@ export async function deleteIndexingRecord(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(indexingRecords).where(eq(indexingRecords.id, id));
+}
+export async function batchDeleteIndexingRecords(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(indexingRecords).where(inArray(indexingRecords.id, ids));
 }
 
 // ─── System Settings ──────────────────────────────────────────────────────────
@@ -312,6 +336,12 @@ export async function deleteKeyword(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(keywords).where(eq(keywords.id, id));
+}
+export async function batchDeleteKeywords(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(keywords).where(inArray(keywords.id, ids));
 }
 
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
@@ -595,6 +625,15 @@ export async function deleteGenerationBatch(id: number) {
   await db.delete(generationItems).where(eq(generationItems.batchId, id));
   await db.delete(generationBatches).where(eq(generationBatches.id, id));
 }
+export async function batchDeleteGenerationBatches(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  for (const id of ids) {
+    await db.delete(generationItems).where(eq(generationItems.batchId, id));
+  }
+  await db.delete(generationBatches).where(inArray(generationBatches.id, ids));
+}
 
 // ─── Generation Items ──────────────────────────────────────────────────────────
 export async function getGenerationItemsByBatch(batchId: number) {
@@ -694,6 +733,12 @@ export async function deletePublishedPage(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(publishedPages).where(eq(publishedPages.id, id));
+}
+export async function batchDeletePublishedPages(ids: number[]) {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(publishedPages).where(inArray(publishedPages.id, ids));
 }
 
 export async function getPublishedPageStats() {
