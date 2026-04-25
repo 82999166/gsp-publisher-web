@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -544,9 +545,9 @@ export default function SeoTemplates() {
   const createMut = trpc.seoTemplates.create.useMutation({ onSuccess: () => { toast.success("模板已创建"); refetch(); setShowEditor(false); } });
   const updateMut = trpc.seoTemplates.update.useMutation({ onSuccess: () => { toast.success("模板已更新"); refetch(); setShowEditor(false); } });
   const deleteMut = trpc.seoTemplates.delete.useMutation({ onSuccess: () => { toast.success("模板已删除"); refetch(); } });
-  const generateMut = trpc.seoTemplates.generate.useMutation({
+  const generateMut = trpc.seoTemplates.generateWithTemplate.useMutation({
     onSuccess: () => { toast.success("文章已生成，保存到素材库"); setShowGenerate(false); },
-    onError: (e) => toast.error(e.message),
+    onError: (e: any) => toast.error(e.message),
   });
 
   const [showEditor, setShowEditor] = useState(false);
@@ -746,8 +747,9 @@ export default function SeoTemplates() {
       </div>
 
       {/* ─── 全屏编辑弹窗 ─── */}
-      <Dialog open={showEditor} onOpenChange={setShowEditor}>
-        <DialogContent className="max-w-[95vw] w-[1400px] h-[92vh] flex flex-col p-0 gap-0">
+      {showEditor && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+        <div className="bg-background rounded-xl border shadow-2xl flex flex-col" style={{ width: 'min(95vw, 1400px)', height: '92vh' }}>
           {/* 顶部标题栏 */}
           <div className="flex items-center justify-between px-6 py-3 border-b shrink-0 bg-background">
             <div className="flex items-center gap-3">
@@ -964,9 +966,10 @@ export default function SeoTemplates() {
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
+        </div>
+        </div>,
+        document.body
+      )}
       {/* ─── 用模板生成文章弹窗 ─── */}
       <Dialog open={showGenerate} onOpenChange={setShowGenerate}>
         <DialogContent className="max-w-md">
