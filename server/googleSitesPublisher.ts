@@ -798,102 +798,168 @@ export class GoogleSitesPublisher {
     let publishSuccess = false;
     
     try {
-      // 尝试找到发布按钮（通常在右上角）
-      const publishBtnFound = await page.evaluate(() => {
+      // 尝试找到发布按钮（右上角蓝色主按钮，文字精确为"发布"或"Publish"）
+      const publishBtnInfo = await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+        // 优先匹配文字精确为"发布"或"Publish"的按钮（排除 ariaLabel 包含发布的工具栏按钮）
         const btn = buttons.find(b => {
-          const text = b.textContent?.toLowerCase() || '';
-          const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
-          return text.includes('publish') || text.includes('发布') || 
-                 ariaLabel.includes('publish') || ariaLabel.includes('发布');
+          const text = b.textContent?.trim() || '';
+          return text === '发布' || text === 'Publish' || text === 'publish';
         });
-        return !!btn;
+        if (btn) return { found: true, text: btn.textContent?.trim(), className: btn.className?.slice(0, 60) };
+        return { found: false };
       });
       
-      if (publishBtnFound) {
-        this.addLog('找到发布按钮，点击发布...');
+      if (publishBtnInfo.found) {
+        this.addLog(`找到发布按钮（文字: "${publishBtnInfo.text}"），点击发布...`);
         
         // 点击发布按钮
         await page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
           const btn = buttons.find(b => {
-            const text = b.textContent?.toLowerCase() || '';
-            const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
-            return text.includes('publish') || text.includes('发布') || 
-                   ariaLabel.includes('publish') || ariaLabel.includes('发布');
+            const text = b.textContent?.trim() || '';
+            return text === '发布' || text === 'Publish' || text === 'publish';
           });
           if (btn) (btn as HTMLElement).click();
         });
         
-        await randomDelay(1500, 2500);
+        await randomDelay(2000, 3000);
         
         // 等待发布对话框（"发布到网络" 弹窗）
+        // Google Sites 弹窗可能用多种容器
         this.addLog('等待发布对话框...');
         try {
-          await page.waitForSelector('[role="dialog"]', { timeout: 8000 }).catch(() => null);
+          // 尝试多种弹窗选择器
+          await page.waitForSelector(
+            '[role="dialog"], [data-dialog], .VfPpkd-P5QLlc, .VfPpkd-xl07Ob-XxIAqe, [jsname="haAclf"]',
+            { timeout: 8000 }
+          ).catch(() => null);
           await randomDelay(800, 1200);
           
-          // 生成随机 slug（8位随机字母数字）
+          // 调试：输出弹窗内容
+          const dialogInfo = await page.evaluate(() => {
+            const selectors = ['[role="dialog"]', '[data-dialog]', '.VfPpkd-P5QLlc', '[jsname="haAclf"]'];
+            for (const sel of selectors) {
+              const el = document.querySelector(sel);
+              if (el) return { selector: sel, html: el.innerHTML.slice(0, 300) };
+            }
+            return null;
+          });
+          this.addLog(`弹窗内容: ${JSON.stringify(dialogInfo)}`);
+          
+          // 找到弹窗内的输入框
+          const inputInfo = await page.evaluate(() => {
+            const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type]), [contenteditable="true"]'));
+            return inputs.map(i => ({
+              tag: i.tagName,
+              type: (i as HTMLInputElement).type,
+              placeholder: (i as HTMLInputElement).placeholder,
+              value: (i as HTMLInputElement).value,
+              ariaLabel: i.getAttribute('aria-label'),
+              className: i.className?.slice(0, 40),
+            }));
+          });
+          this.addLog(`页面输入框: ${JSON.stringify(inputInfo)}`);
+          
+          // 生成随机 slug
           const randomSlug = Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
           this.addLog(`生成随机 slug: ${randomSlug}`);
           
-          // 找到网址输入框并填写 slug
-          const inputFilled = await page.evaluate((slug: string) => {
-            const dialog = document.querySelector('[role="dialog"]');
-            if (!dialog) return false;
-            // 找对话框内的 input 或 [contenteditable] 输入框
-            const input = dialog.querySelector('input[type="text"], input:not([type]), [contenteditable="true"]') as HTMLInputElement | null;
-            if (!input) return false;
-            // 清空并填入 slug
-            input.focus();
-            // 触发 React 合成事件
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            if (nativeInputValueSetter) {
-              nativeInputValueSetter.call(input, slug);
-            } else {
-              input.value = slug;
+          // 弹窗内输入框结构：
+          //   1. 网站标题框 (value="未命名网站", 需要改成文章标题)
+          //   2. URL 网址框 (ariaLabel="网站名称", value="", 需要填 slug)
+          //   3. 其他输入框 (字体大小等)
+          const inputFilled = await page.evaluate((params: { slug: string; title: string }) => {
+            const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'));
+            
+            function fillInput(input: HTMLInputElement, value: string) {
+              input.focus();
+              const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+              if (setter) setter.call(input, value);
+              else input.value = value;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
             }
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-          }, randomSlug);
+            
+            // 1. 填写网站标题框（第一个输入框，通常 value="未命名网站"）
+            const titleInput = inputs.find(i => {
+              const val = (i as HTMLInputElement).value || '';
+              const ariaLabel = i.getAttribute('aria-label') || '';
+              // 匹配网站标题框：有默认值且不是字体大小
+              return (val !== '' || ariaLabel === '') && ariaLabel !== '字体大小' && ariaLabel !== 'Font size' && ariaLabel !== '网站名称' && ariaLabel !== 'Site name';
+            }) as HTMLInputElement | undefined;
+            if (titleInput) fillInput(titleInput, params.title);
+            
+            // 2. 填写 URL 网址框（ariaLabel="网站名称"）
+            let urlInput = inputs.find(i => {
+              const ariaLabel = i.getAttribute('aria-label') || '';
+              return ariaLabel === '网站名称' || ariaLabel === 'Site name' || ariaLabel === 'Web address';
+            }) as HTMLInputElement | undefined;
+            // 备用：找 value 为空且不是字体大小的输入框
+            if (!urlInput) {
+              urlInput = inputs.find(i => {
+                const val = (i as HTMLInputElement).value || '';
+                const ariaLabel = i.getAttribute('aria-label') || '';
+                return val === '' && ariaLabel !== '字体大小' && ariaLabel !== 'Font size';
+              }) as HTMLInputElement | undefined;
+            }
+            if (urlInput) fillInput(urlInput, params.slug);
+            
+            return {
+              titleFilled: !!titleInput,
+              titleValue: titleInput?.value,
+              urlFilled: !!urlInput,
+              urlValue: urlInput?.value,
+              urlAriaLabel: urlInput?.getAttribute('aria-label'),
+            };
+          }, { slug: randomSlug, title });
+          this.addLog(`输入框填写结果: ${JSON.stringify(inputFilled)}`);
           
-          if (inputFilled) {
-            this.addLog(`✅ 已在网址输入框填入 slug: ${randomSlug}`);
-            await randomDelay(800, 1200);
+          if ((inputFilled as any)?.urlFilled) {
+            this.addLog(`✅ 已填写标题和 slug：标题="${(inputFilled as any)?.titleValue}", slug="${randomSlug}"`);
+            await randomDelay(2500, 3500); // 等待 Google 验证 slug
           } else {
-            this.addLog('⚠️ 未找到网址输入框，尝试用键盘输入...');
-            // 备用：用 Tab 键聚焦到输入框再键入
+            this.addLog('⚠️ 未找到 URL 输入框，尝试键盘输入...');
             await page.keyboard.press('Tab');
             await randomDelay(300, 500);
             await page.keyboard.type(randomSlug, { delay: 30 });
-            await randomDelay(500, 800);
+            await randomDelay(2500, 3500);
           }
           
-          // 点击对话框内的发布按钮（此时 slug 已填写，按钮应已激活）
+          // 调试：输出所有按钮信息
+          const allBtnInfo = await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            return btns.slice(0, 15).map(b => ({
+              text: b.textContent?.trim().slice(0, 30),
+              ariaLabel: b.getAttribute('aria-label'),
+              disabled: (b as HTMLButtonElement).disabled,
+              className: b.className?.slice(0, 50),
+            }));
+          });
+          this.addLog(`填入 slug 后的按钮列表: ${JSON.stringify(allBtnInfo.slice(0, 12))}`);
+          
+          // 点击发布按钮：在弹窗内找文字精确为"发布"的未禁用按钮
           const confirmClicked = await page.evaluate(() => {
-            const dialog = document.querySelector('[role="dialog"]');
-            if (!dialog) return false;
-            const buttons = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-            // 优先找蓝色/主要发布按钮
-            const btn = buttons.find(b => {
-              const text = b.textContent?.toLowerCase() || '';
-              const ariaLabel = b.getAttribute('aria-label')?.toLowerCase() || '';
-              return text.includes('publish') || text.includes('发布') || 
-                     ariaLabel.includes('publish') || ariaLabel.includes('发布');
+            const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            const btn = btns.find(b => {
+              const text = b.textContent?.trim() || '';
+              const isDisabled = (b as HTMLButtonElement).disabled;
+              if (isDisabled) return false;
+              return text === '发布' || text === 'Publish' || text === 'publish';
             });
             if (btn) {
               (btn as HTMLElement).click();
-              return true;
+              return btn.textContent?.trim() || 'clicked';
             }
-            return false;
+            return null;
           });
           
           if (confirmClicked) {
-            this.addLog('✅ 已点击发布确认按钮');
+            this.addLog(`✅ 已点击弹窗内发布按钮: "${confirmClicked}"`);
           } else {
-            this.addLog('⚠️ 未找到对话框内的发布按钮');
+            this.addLog('⚠️ 未找到弹窗内发布按钮，尝试 API 发布...');
           }
+          
         } catch (e) {
           this.addLog(`等待发布对话框超时: ${e}`);
         }
