@@ -9,11 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import {
   Plus, Zap, BookOpen, List, BarChart2, MapPin, Edit2, Trash2, Play,
   ChevronDown, ChevronUp, Eye, X, Link2, Globe, Image, Table2,
-  HelpCircle, Heading1, Heading2, Heading3, AlignLeft, Settings2, FileText
+  HelpCircle, Heading1, Heading2, Heading3, AlignLeft, Settings2, FileText,
+  GripVertical, Type, Maximize2, AlignCenter, AlignLeft as AlignLeftIcon, AlignRight,
+  Monitor, Smartphone, Tablet, ChevronRight, Layers, LayoutTemplate
 } from "lucide-react";
 
 // ─── 板块类型定义 ─────────────────────────────────────────────────────────────
@@ -28,7 +31,6 @@ const BLOCK_TYPES = [
   { type: "image", label: "图片占位", icon: Image, color: "bg-pink-50 text-pink-700 border-pink-200", desc: "图片展示区域，AI生成时自动填充" },
   { type: "table", label: "表格", icon: Table2, color: "bg-indigo-50 text-indigo-700 border-indigo-200", desc: "对比表格，适合评测和列表型文章" },
 ] as const;
-
 type BlockType = typeof BLOCK_TYPES[number]["type"];
 
 interface TemplateBlock {
@@ -37,11 +39,20 @@ interface TemplateBlock {
   title: string;
   contentHint: string;
   minWords?: number;
+  // 字体样式
+  fontSize?: "sm" | "base" | "lg" | "xl" | "2xl";
+  fontWeight?: "normal" | "medium" | "semibold" | "bold";
+  textAlign?: "left" | "center" | "right";
+  // 超链接设置
   linkColumns?: number;
   linkHeight?: number;
   linkStyle?: "card" | "list" | "button";
+  // 内嵌网站设置
   embedUrl?: string;
+  embedWidth?: string;
   embedHeight?: number;
+  embedPosition?: "top" | "bottom" | "inline";
+  // 表格设置
   tableColumns?: string;
   tableRows?: number;
 }
@@ -54,51 +65,211 @@ const TEMPLATE_TYPES = [
   { value: "local", label: "本地化型", icon: MapPin, color: "bg-rose-100 text-rose-700", desc: "X城市的Y / 本地X指南" },
 ];
 
+const FONT_SIZES = [
+  { value: "sm", label: "小 (12px)" },
+  { value: "base", label: "正常 (14px)" },
+  { value: "lg", label: "大 (16px)" },
+  { value: "xl", label: "特大 (18px)" },
+  { value: "2xl", label: "超大 (22px)" },
+];
+
+const FONT_WEIGHTS = [
+  { value: "normal", label: "常规" },
+  { value: "medium", label: "中等" },
+  { value: "semibold", label: "半粗" },
+  { value: "bold", label: "粗体" },
+];
+
 function genId() {
   return Math.random().toString(36).slice(2, 10);
 }
-
 function getBlockTypeInfo(type: BlockType) {
   return BLOCK_TYPES.find(b => b.type === type) ?? BLOCK_TYPES[0];
 }
 
-// ─── 板块预览组件 ─────────────────────────────────────────────────────────────
-function BlockPreview({ blocks }: { blocks: TemplateBlock[] }) {
-  if (blocks.length === 0) {
+// ─── 直观页面预览组件 ─────────────────────────────────────────────────────────
+function PagePreview({ blocks, siteNameSuffix, embedUrl, embedWidth, embedHeight, embedPosition }: {
+  blocks: TemplateBlock[];
+  siteNameSuffix?: string;
+  embedUrl?: string;
+  embedWidth?: string;
+  embedHeight?: string;
+  embedPosition?: string;
+}) {
+  const [previewKeyword] = useState("示例关键词");
+
+  if (blocks.length === 0 && !embedUrl) {
     return (
-      <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm">
-        <Eye className="h-8 w-8 mb-2 opacity-30" />
-        <p>添加板块后在此预览文章结构</p>
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm">
+        <LayoutTemplate className="h-12 w-12 mb-3 opacity-20" />
+        <p className="font-medium">添加板块后预览页面效果</p>
+        <p className="text-xs mt-1 opacity-70">右侧将显示真实页面布局</p>
       </div>
     );
   }
+
+  const siteName = siteNameSuffix ? `${previewKeyword} ${siteNameSuffix}` : previewKeyword;
+  const embedH = parseInt(embedHeight || "300") || 300;
+  const embedW = embedWidth || "100%";
+
+  // 构建预览内容（包含模板级别的内嵌网站）
+  const renderEmbedBlock = (url: string, w: string, h: number, label?: string) => (
+    <div className="rounded-lg overflow-hidden border border-cyan-200 bg-cyan-50/30">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-100/50 border-b border-cyan-200">
+        <Globe className="h-3 w-3 text-cyan-600" />
+        <span className="text-xs text-cyan-700 font-medium">{label || "内嵌网站"}</span>
+        <span className="text-xs text-cyan-500 ml-auto">{w} × {h}px</span>
+      </div>
+      {url ? (
+        <div className="relative bg-white" style={{ height: Math.min(h, 200) }}>
+          <iframe
+            src={url}
+            className="w-full h-full border-0 pointer-events-none"
+            style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%" }}
+            sandbox="allow-same-origin"
+            title="预览"
+          />
+          <div className="absolute inset-0 bg-transparent" />
+        </div>
+      ) : (
+        <div className="flex items-center justify-center bg-gray-50" style={{ height: Math.min(h, 120) }}>
+          <p className="text-xs text-muted-foreground">填写 URL 后显示预览</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
-    <div className="space-y-1.5 text-sm">
-      {blocks.map((block, i) => {
-        const info = getBlockTypeInfo(block.type);
-        const indent = ["h3", "paragraph", "faq", "links", "embed", "image", "table"].includes(block.type) ? (block.type === "h3" ? "ml-6" : "ml-4") : "";
-        const prefix = block.type === "h1" ? "# " : block.type === "h2" ? "## " : block.type === "h3" ? "### " : "";
-        return (
-          <div key={block.id} className={`flex items-center gap-2 ${indent}`}>
-            <span className="text-xs text-muted-foreground w-4 shrink-0">{i + 1}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded border ${info.color} shrink-0`}>{info.label}</span>
-            <span className={`truncate ${block.type === "h1" ? "font-bold text-base" : block.type === "h2" ? "font-semibold text-sm" : block.type === "h3" ? "font-medium text-sm" : "text-muted-foreground text-xs"}`}>
-              {prefix}{block.title || `（${info.label}）`}
-            </span>
-            {block.type === "links" && block.linkColumns && (
-              <span className="text-xs text-purple-500 shrink-0">{block.linkColumns}列</span>
-            )}
-            {block.type === "embed" && block.embedHeight && (
-              <span className="text-xs text-cyan-500 shrink-0">{block.embedHeight}px</span>
-            )}
-          </div>
-        );
-      })}
+    <div className="h-full overflow-y-auto">
+      {/* 模拟浏览器框 */}
+      <div className="bg-gray-100 rounded-t-lg px-3 py-2 flex items-center gap-2 border border-b-0">
+        <div className="flex gap-1">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+        </div>
+        <div className="flex-1 bg-white rounded text-xs px-2 py-0.5 text-muted-foreground truncate border">
+          sites.google.com/view/{siteName.toLowerCase().replace(/\s+/g, "-")}
+        </div>
+      </div>
+      {/* 页面内容 */}
+      <div className="border border-t-0 rounded-b-lg bg-white overflow-hidden">
+        {/* 站点标题栏 */}
+        <div className="bg-slate-800 text-white px-4 py-2.5 text-sm font-medium">{siteName}</div>
+
+        {/* 文章内容区 */}
+        <div className="p-4 space-y-3 text-sm">
+          {/* 模板级别内嵌网站 - 顶部 */}
+          {embedUrl && (embedPosition === "top" || !embedPosition) && renderEmbedBlock(embedUrl, embedW, embedH, "模板内嵌网站（顶部）")}
+
+          {blocks.map((block) => {
+            const info = getBlockTypeInfo(block.type);
+            const fsMap: Record<string, string> = { sm: "11px", base: "13px", lg: "15px", xl: "17px", "2xl": "20px" };
+            const fwMap: Record<string, string> = { normal: "400", medium: "500", semibold: "600", bold: "700" };
+            const fs = fsMap[block.fontSize || "base"] || "13px";
+            const fw = fwMap[block.fontWeight || (["h1","h2","h3"].includes(block.type) ? "bold" : "normal")] || "400";
+            const ta = block.textAlign || "left";
+
+            if (block.type === "h1") return (
+              <div key={block.id} className="border-b pb-2">
+                <h1 style={{ fontSize: fsMap[block.fontSize || "2xl"] || "20px", fontWeight: fw, textAlign: ta as any }} className="text-gray-900 leading-tight">
+                  {block.title || `${previewKeyword} - 完整指南`}
+                </h1>
+              </div>
+            );
+            if (block.type === "h2") return (
+              <div key={block.id} className="pt-1">
+                <h2 style={{ fontSize: fsMap[block.fontSize || "xl"] || "17px", fontWeight: fw, textAlign: ta as any }} className="text-gray-800 border-l-3 border-orange-400 pl-2 border-l-[3px]">
+                  {block.title || "## 主要章节标题"}
+                </h2>
+              </div>
+            );
+            if (block.type === "h3") return (
+              <div key={block.id} className="pl-3">
+                <h3 style={{ fontSize: fsMap[block.fontSize || "lg"] || "15px", fontWeight: fw, textAlign: ta as any }} className="text-gray-700">
+                  {block.title || "### 子章节标题"}
+                </h3>
+              </div>
+            );
+            if (block.type === "paragraph") return (
+              <div key={block.id} className="pl-0">
+                <div className="space-y-1">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="h-2 rounded" style={{ background: `rgba(0,0,0,${0.08 - i * 0.02})`, width: i === 2 ? "65%" : "100%" }} />
+                  ))}
+                </div>
+                {block.contentHint && <p style={{ fontSize: "10px", textAlign: ta as any }} className="text-muted-foreground mt-1 italic">{block.contentHint}</p>}
+              </div>
+            );
+            if (block.type === "faq") return (
+              <div key={block.id} className="bg-green-50 rounded-lg p-2 border border-green-100">
+                <p style={{ fontSize: "10px" }} className="text-green-700 font-medium mb-1.5">❓ FAQ 问答区</p>
+                {[...Array(2)].map((_, i) => (
+                  <div key={i} className="mb-1.5">
+                    <div className="h-2 rounded bg-green-200/60 w-4/5 mb-1" />
+                    <div className="h-1.5 rounded bg-green-100 w-full" />
+                  </div>
+                ))}
+              </div>
+            );
+            if (block.type === "links") {
+              const cols = block.linkColumns || 2;
+              return (
+                <div key={block.id} className="bg-purple-50 rounded-lg p-2 border border-purple-100">
+                  <p style={{ fontSize: "10px" }} className="text-purple-700 font-medium mb-1.5">🔗 超链接列表（{cols}列）</p>
+                  <div className={`grid gap-1.5`} style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+                    {[...Array(cols * 2)].map((_, i) => (
+                      <div key={i} className={`rounded border border-purple-200 bg-white flex items-center justify-center ${block.linkStyle === "button" ? "py-1" : "py-1.5 px-2"}`}>
+                        <div className="h-1.5 rounded bg-purple-200 w-3/4" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            if (block.type === "embed") {
+              const bEmbedH = block.embedHeight || 200;
+              const bEmbedW = block.embedWidth || "100%";
+              return (
+                <div key={block.id}>
+                  {renderEmbedBlock(block.embedUrl || "", bEmbedW, bEmbedH, `内嵌网站（${block.embedPosition === "top" ? "顶部" : block.embedPosition === "inline" ? "正文中" : "底部"}）`)}
+                </div>
+              );
+            }
+            if (block.type === "image") return (
+              <div key={block.id} className="bg-pink-50 rounded-lg border border-pink-100 flex items-center justify-center py-4">
+                <div className="text-center">
+                  <Image className="h-6 w-6 text-pink-300 mx-auto mb-1" />
+                  <p style={{ fontSize: "10px" }} className="text-pink-400">图片区域</p>
+                </div>
+              </div>
+            );
+            if (block.type === "table") return (
+              <div key={block.id} className="bg-indigo-50 rounded-lg p-2 border border-indigo-100">
+                <p style={{ fontSize: "10px" }} className="text-indigo-700 font-medium mb-1.5">📊 表格（{block.tableRows || 3}行）</p>
+                <div className="border border-indigo-200 rounded overflow-hidden">
+                  {[...Array(Math.min(block.tableRows || 3, 4))].map((_, i) => (
+                    <div key={i} className={`flex gap-2 px-2 py-1 ${i === 0 ? "bg-indigo-100" : "bg-white border-t border-indigo-100"}`}>
+                      {[...Array(3)].map((_, j) => (
+                        <div key={j} className="flex-1 h-1.5 rounded bg-indigo-200/60" />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+            return null;
+          })}
+
+          {/* 模板级别内嵌网站 - 底部 */}
+          {embedUrl && embedPosition === "bottom" && renderEmbedBlock(embedUrl, embedW, embedH, "模板内嵌网站（底部）")}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ─── 单个板块编辑器 ───────────────────────────────────────────────────────────
+// ─── 板块编辑器组件 ───────────────────────────────────────────────────────────
 function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst, isLast }: {
   block: TemplateBlock;
   onChange: (b: TemplateBlock) => void;
@@ -109,205 +280,333 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
   isLast: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<"content" | "style">("content");
   const info = getBlockTypeInfo(block.type);
   const Icon = info.icon;
 
   return (
-    <div className="border rounded-lg bg-white overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-muted/30">
-        <span className={`text-xs px-1.5 py-0.5 rounded border ${info.color} shrink-0`}>
-          <Icon className="h-3 w-3 inline mr-1" />
+    <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* 头部 */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 hover:bg-muted/30 transition-colors">
+        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+        <span className={`text-xs px-1.5 py-0.5 rounded border ${info.color} shrink-0 flex items-center gap-1`}>
+          <Icon className="h-3 w-3" />
           {info.label}
         </span>
         <span className="text-sm font-medium text-foreground flex-1 truncate">
           {block.title || `（${info.label}）`}
         </span>
+        {/* 快速字号显示 */}
+        {block.fontSize && block.fontSize !== "base" && (
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
+            {FONT_SIZES.find(f => f.value === block.fontSize)?.label.split(" ")[0]}
+          </span>
+        )}
         <div className="flex items-center gap-0.5 shrink-0">
-          <button onClick={onMoveUp} disabled={isFirst} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted disabled:opacity-30">
+          <button onClick={onMoveUp} disabled={isFirst} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted disabled:opacity-30 transition-colors">
             <ChevronUp className="h-3 w-3" />
           </button>
-          <button onClick={onMoveDown} disabled={isLast} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted disabled:opacity-30">
+          <button onClick={onMoveDown} disabled={isLast} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted disabled:opacity-30 transition-colors">
             <ChevronDown className="h-3 w-3" />
           </button>
-          <button onClick={() => setExpanded(e => !e)} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted">
+          <button onClick={() => setExpanded(e => !e)} className={`h-5 w-5 flex items-center justify-center rounded transition-colors ${expanded ? "bg-primary/10 text-primary" : "hover:bg-muted"}`}>
             <Edit2 className="h-3 w-3" />
           </button>
-          <button onClick={onDelete} className="h-5 w-5 flex items-center justify-center rounded hover:bg-red-50 text-muted-foreground hover:text-red-500">
+          <button onClick={onDelete} className="h-5 w-5 flex items-center justify-center rounded hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors">
             <X className="h-3 w-3" />
           </button>
         </div>
       </div>
 
+      {/* 展开编辑区 */}
       {expanded && (
-        <div className="p-3 space-y-3 border-t bg-white">
-          <div className="space-y-1">
-            <Label className="text-xs">板块标题 / 提示文字</Label>
-            <Input className="h-7 text-sm" placeholder={`如：${info.desc}`} value={block.title} onChange={e => onChange({ ...block, title: e.target.value })} />
+        <div className="border-t">
+          {/* Tab 切换 */}
+          <div className="flex border-b bg-muted/10">
+            <button
+              onClick={() => setActiveTab("content")}
+              className={`flex-1 text-xs py-1.5 font-medium transition-colors ${activeTab === "content" ? "border-b-2 border-primary text-primary bg-white" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              内容设置
+            </button>
+            <button
+              onClick={() => setActiveTab("style")}
+              className={`flex-1 text-xs py-1.5 font-medium transition-colors ${activeTab === "style" ? "border-b-2 border-primary text-primary bg-white" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              样式设置
+            </button>
           </div>
 
-          {["paragraph", "h2", "h3", "faq"].includes(block.type) && (
-            <div className="space-y-1">
-              <Label className="text-xs">AI 内容提示</Label>
-              <Textarea className="text-sm min-h-[60px]" placeholder="告诉AI这个板块应该写什么内容" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
-            </div>
-          )}
+          <div className="p-3 space-y-3">
+            {activeTab === "content" && (
+              <>
+                {/* 板块标题 */}
+                <div className="space-y-1">
+                  <Label className="text-xs">板块标题 / 提示文字</Label>
+                  <Input className="h-7 text-sm" placeholder={`如：${info.desc}`} value={block.title} onChange={e => onChange({ ...block, title: e.target.value })} />
+                </div>
 
-          {["paragraph", "h2", "h3"].includes(block.type) && (
-            <div className="space-y-1">
-              <Label className="text-xs">最少字数</Label>
-              <Input type="number" className="h-7 text-sm w-32" min={50} max={2000} value={block.minWords ?? 150} onChange={e => onChange({ ...block, minWords: Number(e.target.value) })} />
-            </div>
-          )}
+                {/* AI 内容提示 */}
+                {["paragraph", "h2", "h3", "faq"].includes(block.type) && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">AI 内容提示</Label>
+                    <Textarea className="text-sm min-h-[56px]" placeholder="告诉AI这个板块应该写什么内容" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
+                  </div>
+                )}
 
-          {block.type === "links" && (
-            <div className="space-y-3 p-3 bg-purple-50/50 rounded-lg border border-purple-100">
-              <p className="text-xs font-medium text-purple-700">超链接板块设置</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">列数</Label>
-                  <Select value={String(block.linkColumns ?? 2)} onValueChange={v => onChange({ ...block, linkColumns: Number(v) })}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[1, 2, 3, 4].map(n => <SelectItem key={n} value={String(n)}>{n} 列</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">高度 (px)</Label>
-                  <Input type="number" className="h-7 text-xs" min={40} max={400} value={block.linkHeight ?? 60} onChange={e => onChange({ ...block, linkHeight: Number(e.target.value) })} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">链接样式</Label>
-                  <Select value={block.linkStyle ?? "card"} onValueChange={v => onChange({ ...block, linkStyle: v as any })}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="card">卡片式</SelectItem>
-                      <SelectItem value="list">列表式</SelectItem>
-                      <SelectItem value="button">按钮式</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">内容提示</Label>
-                <Input className="h-7 text-xs" placeholder="如：插入3个相关文章内链" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
-              </div>
-            </div>
-          )}
+                {/* 最少字数 */}
+                {["paragraph", "h2", "h3"].includes(block.type) && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">最少字数：{block.minWords ?? 150} 字</Label>
+                    <Slider
+                      min={50} max={1000} step={50}
+                      value={[block.minWords ?? 150]}
+                      onValueChange={([v]) => onChange({ ...block, minWords: v })}
+                      className="w-full"
+                    />
+                  </div>
+                )}
 
-          {block.type === "embed" && (
-            <div className="space-y-3 p-3 bg-cyan-50/50 rounded-lg border border-cyan-100">
-              <p className="text-xs font-medium text-cyan-700">内嵌网站设置</p>
-              <div className="space-y-1">
-                <Label className="text-xs">嵌入 URL（可留空）</Label>
-                <Input className="h-7 text-xs" placeholder="https://example.com" value={block.embedUrl ?? ""} onChange={e => onChange({ ...block, embedUrl: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">高度 (px)</Label>
-                <Input type="number" className="h-7 text-xs w-32" min={100} max={1200} value={block.embedHeight ?? 400} onChange={e => onChange({ ...block, embedHeight: Number(e.target.value) })} />
-              </div>
-            </div>
-          )}
+                {/* 超链接板块设置 */}
+                {block.type === "links" && (
+                  <div className="space-y-3 p-3 bg-purple-50/50 rounded-lg border border-purple-100">
+                    <p className="text-xs font-medium text-purple-700">超链接板块设置</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">列数</Label>
+                        <Select value={String(block.linkColumns ?? 2)} onValueChange={v => onChange({ ...block, linkColumns: Number(v) })}>
+                          <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {[1, 2, 3, 4].map(n => <SelectItem key={n} value={String(n)}>{n} 列</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">高度 (px)</Label>
+                        <Input type="number" className="h-7 text-xs" min={40} max={400} value={block.linkHeight ?? 60} onChange={e => onChange({ ...block, linkHeight: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">链接样式</Label>
+                        <Select value={block.linkStyle ?? "card"} onValueChange={v => onChange({ ...block, linkStyle: v as any })}>
+                          <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="card">卡片式</SelectItem>
+                            <SelectItem value="list">列表式</SelectItem>
+                            <SelectItem value="button">按钮式</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">内容提示</Label>
+                      <Input className="h-7 text-xs" placeholder="如：插入3个相关文章内链" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
+                    </div>
+                  </div>
+                )}
 
-          {block.type === "table" && (
-            <div className="space-y-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
-              <p className="text-xs font-medium text-indigo-700">表格设置</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">列名（逗号分隔）</Label>
-                  <Input className="h-7 text-xs" placeholder="名称,价格,评分" value={block.tableColumns ?? ""} onChange={e => onChange({ ...block, tableColumns: e.target.value })} />
+                {/* 内嵌网站板块设置 */}
+                {block.type === "embed" && (
+                  <div className="space-y-3 p-3 bg-cyan-50/50 rounded-lg border border-cyan-100">
+                    <p className="text-xs font-medium text-cyan-700">内嵌网站板块设置</p>
+                    <div className="space-y-1">
+                      <Label className="text-xs">嵌入 URL</Label>
+                      <Input className="h-7 text-xs" placeholder="https://example.com（留空则由发布时指定）" value={block.embedUrl ?? ""} onChange={e => onChange({ ...block, embedUrl: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">宽度</Label>
+                        <Input className="h-7 text-xs" placeholder="100%" value={block.embedWidth ?? "100%"} onChange={e => onChange({ ...block, embedWidth: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">高度 (px)</Label>
+                        <Input type="number" className="h-7 text-xs" min={100} max={2000} value={block.embedHeight ?? 300} onChange={e => onChange({ ...block, embedHeight: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">嵌入位置</Label>
+                        <Select value={block.embedPosition ?? "inline"} onValueChange={v => onChange({ ...block, embedPosition: v as any })}>
+                          <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="top">文章顶部</SelectItem>
+                            <SelectItem value="inline">正文中</SelectItem>
+                            <SelectItem value="bottom">文章底部</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 表格设置 */}
+                {block.type === "table" && (
+                  <div className="space-y-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
+                    <p className="text-xs font-medium text-indigo-700">表格设置</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">行数</Label>
+                        <Input type="number" className="h-7 text-xs" min={2} max={20} value={block.tableRows ?? 4} onChange={e => onChange({ ...block, tableRows: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">列名（逗号分隔）</Label>
+                        <Input className="h-7 text-xs" placeholder="名称,价格,评分" value={block.tableColumns ?? ""} onChange={e => onChange({ ...block, tableColumns: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">内容提示</Label>
+                      <Input className="h-7 text-xs" placeholder="如：对比5款产品的价格和功能" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {activeTab === "style" && (
+              <div className="space-y-3">
+                {/* 字体大小 */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">字体大小</Label>
+                  <div className="grid grid-cols-5 gap-1">
+                    {FONT_SIZES.map(fs => (
+                      <button
+                        key={fs.value}
+                        onClick={() => onChange({ ...block, fontSize: fs.value as any })}
+                        className={`text-xs py-1 rounded border transition-colors ${(block.fontSize ?? (["h1"].includes(block.type) ? "2xl" : ["h2"].includes(block.type) ? "xl" : ["h3"].includes(block.type) ? "lg" : "base")) === fs.value ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+                      >
+                        {fs.label.split(" ")[0]}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">行数</Label>
-                  <Input type="number" className="h-7 text-xs" min={2} max={20} value={block.tableRows ?? 5} onChange={e => onChange({ ...block, tableRows: Number(e.target.value) })} />
+
+                {/* 字体粗细 */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">字体粗细</Label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {FONT_WEIGHTS.map(fw => (
+                      <button
+                        key={fw.value}
+                        onClick={() => onChange({ ...block, fontWeight: fw.value as any })}
+                        className={`text-xs py-1 rounded border transition-colors ${(block.fontWeight ?? (["h1","h2","h3"].includes(block.type) ? "bold" : "normal")) === fw.value ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+                        style={{ fontWeight: fw.value }}
+                      >
+                        {fw.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 文字对齐 */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">文字对齐</Label>
+                  <div className="flex gap-1">
+                    {[
+                      { value: "left", icon: AlignLeftIcon, label: "左对齐" },
+                      { value: "center", icon: AlignCenter, label: "居中" },
+                      { value: "right", icon: AlignRight, label: "右对齐" },
+                    ].map(({ value, icon: Icon, label }) => (
+                      <button
+                        key={value}
+                        onClick={() => onChange({ ...block, textAlign: value as any })}
+                        title={label}
+                        className={`flex-1 py-1.5 flex items-center justify-center rounded border transition-colors ${(block.textAlign ?? "left") === value ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 预览效果 */}
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-2">样式预览</p>
+                  <div
+                    style={{
+                      fontSize: { sm: "12px", base: "14px", lg: "16px", xl: "18px", "2xl": "22px" }[block.fontSize || "base"] || "14px",
+                      fontWeight: { normal: "400", medium: "500", semibold: "600", bold: "700" }[block.fontWeight || "normal"] || "400",
+                      textAlign: (block.textAlign || "left") as any,
+                    }}
+                    className="text-foreground"
+                  >
+                    {block.title || `${getBlockTypeInfo(block.type).label} 示例文字`}
+                  </div>
                 </div>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">内容提示</Label>
-                <Input className="h-7 text-xs" placeholder="如：对比5种方案的价格和功能" value={block.contentHint} onChange={e => onChange({ ...block, contentHint: e.target.value })} />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ─── 主页面 ───────────────────────────────────────────────────────────────────
+// ─── 主组件 ───────────────────────────────────────────────────────────────────
 export default function SeoTemplates() {
+  const { data: templates = [], refetch } = trpc.seoTemplates.list.useQuery();
+  const createMut = trpc.seoTemplates.create.useMutation({ onSuccess: () => { toast.success("模板已创建"); refetch(); setShowEditor(false); } });
+  const updateMut = trpc.seoTemplates.update.useMutation({ onSuccess: () => { toast.success("模板已更新"); refetch(); setShowEditor(false); } });
+  const deleteMut = trpc.seoTemplates.delete.useMutation({ onSuccess: () => { toast.success("模板已删除"); refetch(); } });
+  const generateMut = trpc.seoTemplates.generate.useMutation({
+    onSuccess: () => { toast.success("文章已生成，保存到素材库"); setShowGenerate(false); },
+    onError: (e) => toast.error(e.message),
+  });
+
   const [showEditor, setShowEditor] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<any>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
-  const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
-  const [showHelp, setShowHelp] = useState(false);
-
-  const [editorForm, setEditorForm] = useState({
-    name: "", type: "informational" as any, description: "", promptTemplate: "", minWords: 800, maxWords: 1500,
-    siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "600px", embedPosition: "bottom" as "bottom" | "top",
-  });
   const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
-  const [checkedTypes, setCheckedTypes] = useState<Set<BlockType>>(new Set());
-
-  const { data: templates = [], refetch } = trpc.seoTemplates.list.useQuery();
-  const createMut = trpc.seoTemplates.create.useMutation({ onSuccess: () => { refetch(); setShowEditor(false); toast.success("模板创建成功"); } });
-  const updateMut = trpc.seoTemplates.update.useMutation({ onSuccess: () => { refetch(); setShowEditor(false); toast.success("模板已更新"); } });
-  const deleteMut = trpc.seoTemplates.delete.useMutation({ onSuccess: () => { refetch(); toast.success("模板已删除"); } });
-  const generateMut = trpc.seoTemplates.generateWithTemplate.useMutation({
-    onSuccess: (data) => { setShowGenerate(false); toast.success(`文章生成成功！已生成 ${data.wordCount} 字，已保存到素材库`); },
-    onError: (e) => toast.error(`生成失败：${e.message}`),
+  const [editorForm, setEditorForm] = useState({
+    name: "", type: "informational", description: "", promptTemplate: "",
+    minWords: 800, maxWords: 1200,
+    siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom",
   });
+  const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
+  const [previewMode, setPreviewMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
+
+  const checkedTypes = new Set(blocks.map(b => b.type));
 
   function openCreate() {
     setEditingTemplate(null);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1500, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "600px", embedPosition: "bottom" as "bottom" | "top" });
     setBlocks([]);
-    setCheckedTypes(new Set());
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom" });
     setShowEditor(true);
   }
-
   function openEdit(tpl: any) {
     setEditingTemplate(tpl);
-    setEditorForm({ name: tpl.name, type: tpl.type, description: tpl.description ?? "", promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1500, siteNameSuffix: (tpl as any).siteNameSuffix ?? "", embedUrl: (tpl as any).embedUrl ?? "", embedWidth: (tpl as any).embedWidth ?? "100%", embedHeight: (tpl as any).embedHeight ?? "600px", embedPosition: ((tpl as any).embedPosition ?? "bottom") as "bottom" | "top" });
-    const savedBlocks: TemplateBlock[] = tpl.structure?.blocks ?? [];
-    setBlocks(savedBlocks);
-    setCheckedTypes(new Set(savedBlocks.map((b: TemplateBlock) => b.type)));
+    setBlocks((tpl.structure?.blocks ?? []) as TemplateBlock[]);
+    setEditorForm({
+      name: tpl.name, type: tpl.type, description: tpl.description ?? "",
+      promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1200,
+      siteNameSuffix: tpl.siteNameSuffix ?? "", embedUrl: tpl.embedUrl ?? "",
+      embedWidth: tpl.embedWidth ?? "100%", embedHeight: tpl.embedHeight ?? "300",
+      embedPosition: tpl.embedPosition ?? "bottom",
+    });
     setShowEditor(true);
   }
 
   function toggleBlockType(type: BlockType) {
-    setCheckedTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) {
-        next.delete(type);
-        setBlocks(bs => bs.filter(b => b.type !== type));
-      } else {
-        next.add(type);
-        const info = getBlockTypeInfo(type);
-        const newBlock: TemplateBlock = {
-          id: genId(), type, title: info.label, contentHint: info.desc,
-          ...(type === "links" ? { linkColumns: 2, linkHeight: 60, linkStyle: "card" } : {}),
-          ...(type === "embed" ? { embedHeight: 400 } : {}),
-          ...(type === "table" ? { tableRows: 5 } : {}),
-          ...((type === "paragraph" || type === "h2" || type === "h3") ? { minWords: 150 } : {}),
-        };
-        setBlocks(bs => [...bs, newBlock]);
-      }
-      return next;
+    setBlocks(bs => {
+      if (bs.some(b => b.type === type)) return bs.filter(b => b.type !== type);
+      const defaultBlock: TemplateBlock = {
+        id: genId(), type, title: "", contentHint: "",
+        minWords: ["h2", "h3", "paragraph"].includes(type) ? 150 : undefined,
+        linkColumns: type === "links" ? 2 : undefined,
+        linkHeight: type === "links" ? 60 : undefined,
+        linkStyle: type === "links" ? "card" : undefined,
+        embedHeight: type === "embed" ? 300 : undefined,
+        embedWidth: type === "embed" ? "100%" : undefined,
+        embedPosition: type === "embed" ? "inline" : undefined,
+        tableRows: type === "table" ? 4 : undefined,
+      };
+      return [...bs, defaultBlock];
     });
   }
-
   function updateBlock(id: string, updated: TemplateBlock) {
     setBlocks(bs => bs.map(b => b.id === id ? updated : b));
   }
-
   function deleteBlock(id: string) {
-    const block = blocks.find(b => b.id === id);
-    if (block) setCheckedTypes(prev => { const next = new Set(prev); next.delete(block.type); return next; });
     setBlocks(bs => bs.filter(b => b.id !== id));
   }
-
   function moveBlock(id: string, dir: "up" | "down") {
     setBlocks(bs => {
       const idx = bs.findIndex(b => b.id === id);
@@ -319,7 +618,6 @@ export default function SeoTemplates() {
       return next;
     });
   }
-
   function buildAutoPrompt() {
     if (blocks.length === 0) return editorForm.promptTemplate;
     const lines = [
@@ -339,17 +637,24 @@ export default function SeoTemplates() {
     lines.push(`\n要求：关键词密度1-2%，自然融入；Markdown格式输出。`);
     return lines.join("\n");
   }
-
   function handleSave() {
     const finalPrompt = editorForm.promptTemplate.trim() || buildAutoPrompt();
     const structure = { blocks };
+    const payload = {
+      name: editorForm.name, description: editorForm.description || undefined,
+      promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure,
+      siteNameSuffix: editorForm.siteNameSuffix || undefined,
+      embedUrl: editorForm.embedUrl || undefined,
+      embedWidth: editorForm.embedWidth || undefined,
+      embedHeight: editorForm.embedHeight || undefined,
+      embedPosition: (editorForm.embedPosition as any) || undefined,
+    };
     if (editingTemplate) {
-      updateMut.mutate({ id: editingTemplate.id, name: editorForm.name, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure, siteNameSuffix: (editorForm as any).siteNameSuffix || undefined, embedUrl: (editorForm as any).embedUrl || undefined, embedWidth: (editorForm as any).embedWidth || undefined, embedHeight: (editorForm as any).embedHeight || undefined, embedPosition: (editorForm as any).embedPosition || undefined });
+      updateMut.mutate({ id: editingTemplate.id, ...payload });
     } else {
-      createMut.mutate({ name: editorForm.name, type: editorForm.type, description: editorForm.description || undefined, promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure, siteNameSuffix: (editorForm as any).siteNameSuffix || undefined, embedUrl: (editorForm as any).embedUrl || undefined, embedWidth: (editorForm as any).embedWidth || undefined, embedHeight: (editorForm as any).embedHeight || undefined, embedPosition: (editorForm as any).embedPosition || undefined });
+      createMut.mutate({ type: editorForm.type, ...payload } as any);
     }
   }
-
   const getTypeInfo = (type: string) => TEMPLATE_TYPES.find(t => t.value === type) ?? TEMPLATE_TYPES[0];
 
   return (
@@ -396,225 +701,269 @@ export default function SeoTemplates() {
                 </div>
                 {savedBlocks.length > 0 && (
                   <div className="flex flex-wrap gap-1">
-                    {savedBlocks.slice(0, 6).map((b: TemplateBlock) => {
+                    {savedBlocks.slice(0, 5).map((b: TemplateBlock) => {
                       const bInfo = getBlockTypeInfo(b.type);
-                      return <span key={b.id} className={`text-[10px] px-1.5 py-0.5 rounded border ${bInfo.color}`}>{bInfo.label}</span>;
+                      const BIcon = bInfo.icon;
+                      return (
+                        <span key={b.id} className={`text-xs px-1.5 py-0.5 rounded border flex items-center gap-1 ${bInfo.color}`}>
+                          <BIcon className="h-2.5 w-2.5" />{bInfo.label}
+                        </span>
+                      );
                     })}
-                    {savedBlocks.length > 6 && <span className="text-[10px] px-1.5 py-0.5 rounded border bg-muted text-muted-foreground">+{savedBlocks.length - 6}</span>}
+                    {savedBlocks.length > 5 && <span className="text-xs text-muted-foreground">+{savedBlocks.length - 5}</span>}
                   </div>
                 )}
-                <div className="flex items-center gap-2 pt-1">
-                  <Button size="sm" className="h-7 text-xs flex-1" onClick={() => { setSelectedTemplate(tpl); setShowGenerate(true); }}>
-                    <Play className="h-3 w-3 mr-1" />用此模板生成
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEdit(tpl)}>
+                {/* 发布设置标签 */}
+                {(tpl.siteNameSuffix || tpl.embedUrl) && (
+                  <div className="flex flex-wrap gap-1">
+                    {tpl.siteNameSuffix && <span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200">后缀: {tpl.siteNameSuffix}</span>}
+                    {tpl.embedUrl && <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600 border border-cyan-200">内嵌网站</span>}
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={() => openEdit(tpl)}>
                     <Edit2 className="h-3 w-3 mr-1" />编辑
                   </Button>
-                  {!tpl.isPreset && (
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500" onClick={() => deleteMut.mutate({ id: tpl.id })}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  )}
+                  <Button size="sm" className="flex-1 h-7 text-xs bg-primary" onClick={() => { setSelectedTemplate(tpl); setShowGenerate(true); }}>
+                    <Play className="h-3 w-3 mr-1" />生成文章
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-red-500 hover:bg-red-50 hover:border-red-200" onClick={() => { if (confirm(`确认删除模板「${tpl.name}」？`)) deleteMut.mutate({ id: tpl.id }); }}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
           );
         })}
+        {(templates as any[]).length === 0 && (
+          <div className="col-span-3 flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <Layers className="h-12 w-12 mb-3 opacity-20" />
+            <p className="font-medium">暂无模板</p>
+            <p className="text-sm mt-1">点击「新建模板」创建第一个 SEO 文章模板</p>
+            <Button className="mt-4" onClick={openCreate}><Plus className="w-4 h-4 mr-2" />新建模板</Button>
+          </div>
+        )}
       </div>
 
-      {/* ─── 模板编辑器弹窗 ─── */}
+      {/* ─── 全屏编辑弹窗 ─── */}
       <Dialog open={showEditor} onOpenChange={setShowEditor}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col p-0">
-          <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="h-5 w-5 text-primary" />
-              {editingTemplate ? `编辑模板：${editingTemplate.name}` : "新建 SEO 文章模板"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex flex-1 overflow-hidden">
-            {/* 左侧：基本设置 + 板块选择 + 板块列表 */}
-            <div className="w-[55%] border-r overflow-y-auto p-5 space-y-5">
-              {/* 基本信息 */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">基本信息</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">模板名称 *</Label>
-                    <Input className="h-8" placeholder="如：信息型SEO文章" value={editorForm.name} onChange={e => setEditorForm(f => ({ ...f, name: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">模板类型</Label>
-                    <Select value={editorForm.type} onValueChange={v => setEditorForm(f => ({ ...f, type: v as any }))}>
-                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {TEMPLATE_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">最少字数</Label>
-                    <Input type="number" className="h-8" value={editorForm.minWords} onChange={e => setEditorForm(f => ({ ...f, minWords: Number(e.target.value) }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">最多字数</Label>
-                    <Input type="number" className="h-8" value={editorForm.maxWords} onChange={e => setEditorForm(f => ({ ...f, maxWords: Number(e.target.value) }))} />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">模板描述（可选）</Label>
-                  <Input className="h-8" placeholder="简述该模板适用场景" value={editorForm.description} onChange={e => setEditorForm(f => ({ ...f, description: e.target.value }))} />
-                </div>
-              </div>
-
-              {/* 板块类型勾选 */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">选择板块类型</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {BLOCK_TYPES.map(bt => {
-                    const Icon = bt.icon;
-                    const checked = checkedTypes.has(bt.type);
-                    return (
-                      <label key={bt.type} className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${checked ? `${bt.color} border-current` : "bg-muted/30 border-border hover:bg-muted/60"}`}>
-                        <Checkbox checked={checked} onCheckedChange={() => toggleBlockType(bt.type)} className="mt-0.5 shrink-0" />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1">
-                            <Icon className="h-3 w-3 shrink-0" />
-                            <span className="text-xs font-medium truncate">{bt.label}</span>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight line-clamp-2">{bt.desc}</p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 板块列表 */}
-              {blocks.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">板块顺序与设置</h3>
-                  <div className="space-y-2">
-                    {blocks.map((block, idx) => (
-                      <BlockEditor
-                        key={block.id}
-                        block={block}
-                        onChange={updated => updateBlock(block.id, updated)}
-                        onDelete={() => deleteBlock(block.id)}
-                        onMoveUp={() => moveBlock(block.id, "up")}
-                        onMoveDown={() => moveBlock(block.id, "down")}
-                        isFirst={idx === 0}
-                        isLast={idx === blocks.length - 1}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 自定义 Prompt */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">AI 提示词（高级）</h3>
-                  <button className="text-xs text-primary hover:underline" onClick={() => setEditorForm(f => ({ ...f, promptTemplate: buildAutoPrompt() }))}>
-                    根据板块自动生成
-                  </button>
-                </div>
-                <Textarea rows={5} className="text-xs font-mono" placeholder="留空则根据板块自动生成提示词。支持占位符：{keyword} {language} {minWords}" value={editorForm.promptTemplate} onChange={e => setEditorForm(f => ({ ...f, promptTemplate: e.target.value }))} />
-                <p className="text-xs text-muted-foreground">留空时系统将根据上方板块配置自动生成提示词</p>
-              </div>
-
-              {/* 发布设置 */}
-              <div className="space-y-3 border-t pt-4">
-                <h3 className="text-sm font-semibold flex items-center gap-1.5">
-                  <span>🌐</span> 发布设置
-                </h3>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">站点名称后缀</label>
-                  <input
-                    className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="如：免费下载 教程（发布时站点名 = 关键词 + 后缀）"
-                    value={(editorForm as any).siteNameSuffix ?? ""}
-                    onChange={e => setEditorForm(f => ({ ...f, siteNameSuffix: e.target.value } as any))}
-                  />
-                  <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">内嵌网站 URL</label>
-                  <input
-                    className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="https://example.com（留空则不嵌入）"
-                    value={(editorForm as any).embedUrl ?? ""}
-                    onChange={e => setEditorForm(f => ({ ...f, embedUrl: e.target.value } as any))}
-                  />
-                </div>
-                {(editorForm as any).embedUrl && (
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground">宽度</label>
-                      <input
-                        className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="100%"
-                        value={(editorForm as any).embedWidth ?? "100%"}
-                        onChange={e => setEditorForm(f => ({ ...f, embedWidth: e.target.value } as any))}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground">高度</label>
-                      <input
-                        className="w-full h-8 px-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="600px"
-                        value={(editorForm as any).embedHeight ?? "600px"}
-                        onChange={e => setEditorForm(f => ({ ...f, embedHeight: e.target.value } as any))}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground">嵌入位置</label>
-                      <select
-                        className="w-full h-8 px-2 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        value={(editorForm as any).embedPosition ?? "bottom"}
-                        onChange={e => setEditorForm(f => ({ ...f, embedPosition: e.target.value } as any))}
-                      >
-                        <option value="bottom">文章底部</option>
-                        <option value="top">文章顶部</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
+        <DialogContent className="max-w-[95vw] w-[1400px] h-[92vh] flex flex-col p-0 gap-0">
+          {/* 顶部标题栏 */}
+          <div className="flex items-center justify-between px-6 py-3 border-b shrink-0 bg-background">
+            <div className="flex items-center gap-3">
+              <LayoutTemplate className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">{editingTemplate ? `编辑模板：${editingTemplate.name}` : "新建 SEO 模板"}</h2>
             </div>
-
-            {/* 右侧：结构预览 */}
-            <div className="w-[45%] overflow-y-auto p-5 bg-muted/20">
-              <div className="flex items-center gap-2 mb-4">
-                <Eye className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold">文章结构预览</h3>
-                <span className="text-xs text-muted-foreground ml-auto">{blocks.length} 个板块</span>
-              </div>
-              <div className="bg-white rounded-lg border p-4 min-h-[200px]">
-                <BlockPreview blocks={blocks} />
-              </div>
-              {blocks.length > 0 && (
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100 text-xs text-blue-700 space-y-1">
-                  <p className="font-medium">板块统计</p>
-                  <p>标题层级：{blocks.filter(b => b.type === "h1").length} H1 / {blocks.filter(b => b.type === "h2").length} H2 / {blocks.filter(b => b.type === "h3").length} H3</p>
-                  <p>内容板块：{blocks.filter(b => b.type === "paragraph").length} 段落 / {blocks.filter(b => b.type === "faq").length} FAQ</p>
-                  {blocks.some(b => b.type === "links") && <p>超链接板块：{blocks.filter(b => b.type === "links").length} 个</p>}
-                  {blocks.some(b => b.type === "embed") && <p>内嵌网站：{blocks.filter(b => b.type === "embed").length} 个</p>}
-                  {blocks.some(b => b.type === "table") && <p>表格：{blocks.filter(b => b.type === "table").length} 个</p>}
-                  <p className="mt-2 text-blue-600 font-medium">预计最少字数：{blocks.reduce((s, b) => s + (b.minWords ?? 0), 0)} 字</p>
-                </div>
-              )}
+            {/* 预览模式切换 */}
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+              {[
+                { mode: "desktop", icon: Monitor, label: "桌面" },
+                { mode: "tablet", icon: Tablet, label: "平板" },
+                { mode: "mobile", icon: Smartphone, label: "手机" },
+              ].map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => setPreviewMode(mode as any)}
+                  title={label}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors ${previewMode === mode ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />{label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t shrink-0 bg-background">
-            <Button variant="outline" onClick={() => setShowEditor(false)}>取消</Button>
-            <Button disabled={!editorForm.name || createMut.isPending || updateMut.isPending} onClick={handleSave}>
-              {(createMut.isPending || updateMut.isPending) ? "保存中..." : (editingTemplate ? "保存修改" : "创建模板")}
-            </Button>
-          </DialogFooter>
+          {/* 主体：左侧配置 + 右侧预览 */}
+          <div className="flex flex-1 overflow-hidden">
+            {/* 左侧配置区 */}
+            <div className="w-[480px] shrink-0 border-r flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {/* 基本信息 */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                    <Settings2 className="h-4 w-4 text-primary" /> 基本信息
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">模板名称 *</Label>
+                      <Input className="h-8" placeholder="如：信息型文章" value={editorForm.name} onChange={e => setEditorForm(f => ({ ...f, name: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">模板类型</Label>
+                      <Select value={editorForm.type} onValueChange={v => setEditorForm(f => ({ ...f, type: v }))}>
+                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {TEMPLATE_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">最少字数：{editorForm.minWords}</Label>
+                      <Slider min={200} max={5000} step={100} value={[editorForm.minWords]} onValueChange={([v]) => setEditorForm(f => ({ ...f, minWords: v }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">最多字数：{editorForm.maxWords}</Label>
+                      <Slider min={500} max={10000} step={100} value={[editorForm.maxWords]} onValueChange={([v]) => setEditorForm(f => ({ ...f, maxWords: v }))} />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">模板描述（可选）</Label>
+                    <Input className="h-8 text-sm" placeholder="适合解释性内容，如「什么是X」" value={editorForm.description} onChange={e => setEditorForm(f => ({ ...f, description: e.target.value }))} />
+                  </div>
+                </div>
+
+                {/* 选择板块类型 */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                    <Layers className="h-4 w-4 text-primary" /> 选择板块类型
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {BLOCK_TYPES.map(bt => {
+                      const Icon = bt.icon;
+                      const checked = checkedTypes.has(bt.type);
+                      return (
+                        <label key={bt.type} className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${checked ? `${bt.color} border-current` : "bg-muted/30 border-border hover:bg-muted/60"}`}>
+                          <Checkbox checked={checked} onCheckedChange={() => toggleBlockType(bt.type)} className="mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1">
+                              <Icon className="h-3 w-3 shrink-0" />
+                              <span className="text-xs font-medium truncate">{bt.label}</span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight line-clamp-2">{bt.desc}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 板块列表（可编辑） */}
+                {blocks.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <GripVertical className="h-4 w-4 text-primary" /> 板块顺序与设置
+                      <span className="text-xs text-muted-foreground font-normal ml-1">（点击 ✏️ 展开编辑）</span>
+                    </h3>
+                    <div className="space-y-2">
+                      {blocks.map((block, idx) => (
+                        <BlockEditor
+                          key={block.id}
+                          block={block}
+                          onChange={updated => updateBlock(block.id, updated)}
+                          onDelete={() => deleteBlock(block.id)}
+                          onMoveUp={() => moveBlock(block.id, "up")}
+                          onMoveDown={() => moveBlock(block.id, "down")}
+                          isFirst={idx === 0}
+                          isLast={idx === blocks.length - 1}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* AI 提示词 */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-foreground">AI 提示词（高级）</h3>
+                    <button className="text-xs text-primary hover:underline" onClick={() => setEditorForm(f => ({ ...f, promptTemplate: buildAutoPrompt() }))}>
+                      根据板块自动生成
+                    </button>
+                  </div>
+                  <Textarea rows={4} className="text-xs font-mono" placeholder="留空则根据板块自动生成提示词。支持占位符：{keyword} {language} {minWords}" value={editorForm.promptTemplate} onChange={e => setEditorForm(f => ({ ...f, promptTemplate: e.target.value }))} />
+                  <p className="text-xs text-muted-foreground">留空时系统将根据上方板块配置自动生成提示词</p>
+                </div>
+
+                {/* 发布设置 */}
+                <div className="space-y-3 border-t pt-4">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                    <Globe className="h-4 w-4 text-primary" /> 发布设置
+                  </h3>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">站点名称后缀</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      placeholder="如：免费下载 教程（发布时站点名 = 关键词 + 后缀）"
+                      value={editorForm.siteNameSuffix}
+                      onChange={e => setEditorForm(f => ({ ...f, siteNameSuffix: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">模板内嵌网站 URL</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      placeholder="https://example.com（留空则不嵌入）"
+                      value={editorForm.embedUrl}
+                      onChange={e => setEditorForm(f => ({ ...f, embedUrl: e.target.value }))}
+                    />
+                  </div>
+                  {editorForm.embedUrl && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">宽度</Label>
+                        <Input className="h-8 text-sm" placeholder="100%" value={editorForm.embedWidth} onChange={e => setEditorForm(f => ({ ...f, embedWidth: e.target.value }))} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">高度 (px)</Label>
+                        <Input type="number" className="h-8 text-sm" min={100} max={2000} value={editorForm.embedHeight} onChange={e => setEditorForm(f => ({ ...f, embedHeight: e.target.value }))} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">嵌入位置</Label>
+                        <Select value={editorForm.embedPosition} onValueChange={v => setEditorForm(f => ({ ...f, embedPosition: v }))}>
+                          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="top">文章顶部</SelectItem>
+                            <SelectItem value="bottom">文章底部</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 右侧预览区 */}
+            <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+              <div className="flex items-center justify-between px-4 py-2 border-b bg-background shrink-0">
+                <span className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                  <Eye className="h-4 w-4 text-primary" /> 页面预览
+                </span>
+                <span className="text-xs text-muted-foreground">实时预览 Google Sites 页面效果</span>
+              </div>
+              <div className="flex-1 overflow-hidden p-4">
+                <div className={`h-full mx-auto transition-all duration-300 ${previewMode === "mobile" ? "max-w-[375px]" : previewMode === "tablet" ? "max-w-[768px]" : "max-w-full"}`}>
+                  <PagePreview
+                    blocks={blocks}
+                    siteNameSuffix={editorForm.siteNameSuffix}
+                    embedUrl={editorForm.embedUrl}
+                    embedWidth={editorForm.embedWidth}
+                    embedHeight={editorForm.embedHeight}
+                    embedPosition={editorForm.embedPosition}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 底部操作栏 */}
+          <div className="flex items-center justify-between px-6 py-3 border-t shrink-0 bg-background">
+            <div className="text-xs text-muted-foreground">
+              {blocks.length > 0 ? (
+                <span>{blocks.length} 个板块 · 预计 {blocks.reduce((s, b) => s + (b.minWords ?? 0), 0)} 字以上</span>
+              ) : (
+                <span>请在左侧添加板块</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowEditor(false)}>取消</Button>
+              <Button disabled={!editorForm.name || createMut.isPending || updateMut.isPending} onClick={handleSave}>
+                {(createMut.isPending || updateMut.isPending) ? "保存中..." : (editingTemplate ? "保存修改" : "创建模板")}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -679,12 +1028,12 @@ export default function SeoTemplates() {
               <p>1. 点击「新建模板」，填写名称和类型；2. 在「选择板块类型」中勾选需要的板块；3. 点击板块右侧编辑图标设置内容提示和字数；4. 右侧实时预览文章结构；5. 点击「创建模板」保存。</p>
             </div>
             <div>
-              <p className="font-semibold text-foreground mb-1">超链接板块怎么用？</p>
-              <p>勾选「超链接列表」后，可设置列数（1-4列）、高度和样式（卡片/列表/按钮）。AI 生成时会在该位置插入相关推荐链接，适合做内链建设。</p>
+              <p className="font-semibold text-foreground mb-1">板块样式设置</p>
+              <p>展开板块编辑器后，切换到「样式设置」标签，可以调整字体大小、粗细和对齐方式，右侧预览区会实时更新效果。</p>
             </div>
             <div>
-              <p className="font-semibold text-foreground mb-1">如何用模板生成文章？</p>
-              <p>在模板卡片上点击「用此模板生成」，输入关键词后 AI 会按照模板结构生成文章，并自动保存到素材库。</p>
+              <p className="font-semibold text-foreground mb-1">内嵌网站怎么配置？</p>
+              <p>在「发布设置」区域填写内嵌网站 URL，可设置宽度、高度和嵌入位置（顶部/底部）。也可以在板块中添加「内嵌网站」板块，支持正文中嵌入。</p>
             </div>
           </div>
           <DialogFooter><Button onClick={() => setShowHelp(false)}>知道了</Button></DialogFooter>
