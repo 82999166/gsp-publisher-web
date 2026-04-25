@@ -1123,6 +1123,24 @@ async function runPublishTaskAsync(
   const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
   const siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
   const computedSiteName = siteNameSuffix ? `${material.title} ${siteNameSuffix}` : material.title;
+
+  // 提取 SEO 模板中的内嵌网站板块
+  let embedBlocks: Array<{ embedUrl: string; embedHeight?: number }> = [];
+  if ((material as any).seoTemplateId) {
+    try {
+      const tpl = await getSeoTemplateById((material as any).seoTemplateId);
+      if (tpl?.structure) {
+        const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
+        if (Array.isArray(structure)) {
+          embedBlocks = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
+            .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as number | undefined }));
+        }
+      }
+    } catch (e) {
+      console.error('[发布引擎] 读取 SEO 模板失败:', e);
+    }
+  }
+
   try {
     const result = await googleSitesPublisher.publish({
       cookieParsed: (account as any).cookieParsed as any[],
@@ -1134,6 +1152,7 @@ async function runPublishTaskAsync(
       fingerprint: fingerprintData ?? generateFingerprint(account.id),
       headless: true,
       timeout: 120000,
+      embedBlocks: embedBlocks.length > 0 ? embedBlocks : undefined,
     });
     if (result.success) {
       await updatePublishTask(taskId, {
