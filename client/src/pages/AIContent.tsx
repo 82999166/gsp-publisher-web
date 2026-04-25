@@ -20,6 +20,7 @@ import { trpc } from "@/lib/trpc";
 import {
   BarChart2,
   BookOpen,
+  FileText,
   HelpCircle,
   Loader2,
   Plus,
@@ -161,6 +162,14 @@ export default function AIContent() {
     onError: (e) => toast.error(e.message),
   });
 
+  const generateWithTemplateMutation = trpc.seoTemplates.generateWithTemplate.useMutation({
+    onSuccess: (data) => {
+      utils.materials.list.invalidate();
+      toast.success(`文章生成成功（${data.wordCount} 字）`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: seoTemplates = [] } = trpc.seoTemplates.list.useQuery();
   const [newKeyword, setNewKeyword] = useState("");
   const [kwLang, setKwLang] = useState("zh-CN");
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
@@ -172,6 +181,10 @@ export default function AIContent() {
   const [expandedKws, setExpandedKws] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [longTailDialogOpen, setLongTailDialogOpen] = useState(false);
+  const [longTailCoreKw, setLongTailCoreKw] = useState("");
+  const [longTailCount, setLongTailCount] = useState(20);
 
   function handleAddKeyword() {
     if (!newKeyword.trim()) return;
@@ -190,12 +203,40 @@ export default function AIContent() {
 
   function handleGenerate() {
     if (!selectedKw) { toast.error("请选择关键词"); return; }
-    generateMutation.mutate({
-      keyword: selectedKw,
-      language: genLang as any,
-      minWords: genMinWords,
-      style: genStyle as any,
-    });
+    if (selectedTemplateId) {
+      generateWithTemplateMutation.mutate({
+        templateId: selectedTemplateId,
+        keyword: selectedKw,
+        language: genLang as any,
+      });
+    } else {
+      generateMutation.mutate({
+        keyword: selectedKw,
+        language: genLang as any,
+        minWords: genMinWords,
+        style: genStyle as any,
+      });
+    }
+  }
+  function handleLongTailGenerate() {
+    if (!longTailCoreKw.trim()) { toast.error("请输入核心关键词"); return; }
+    expandMutation.mutate(
+      { keyword: longTailCoreKw.trim(), language: genLang as any, count: longTailCount },
+      {
+        onSuccess: (data) => {
+          batchCreateMutation.mutate(
+            { keywords: data.keywords, language: genLang as any },
+            {
+              onSuccess: (res) => {
+                setLongTailDialogOpen(false);
+                setLongTailCoreKw("");
+                toast.success(`已生成并保存 ${res.count} 个长尾关键词`);
+              }
+            }
+          );
+        }
+      }
+    );
   }
 
   function handleAnalyze(kw: Keyword) {
@@ -498,6 +539,29 @@ export default function AIContent() {
                 })()}
               </div>
 
+              <div className="space-y-1.5">
+                <Label>SEO 模板 <span className="text-muted-foreground text-xs font-normal">（可选，选择后按模板结构生成）</span></Label>
+                <Select value={selectedTemplateId ? String(selectedTemplateId) : "none"} onValueChange={v => setSelectedTemplateId(v === "none" ? null : Number(v))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="不使用模板（自由生成）" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">不使用模板（自由生成）</SelectItem>
+                    {(seoTemplates as any[]).map((t: any) => (
+                      <SelectItem key={t.id} value={String(t.id)}>
+                        <span className="flex items-center gap-2">
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                          {t.name}
+                          {t.usageCount > 0 && <span className="text-[10px] text-muted-foreground ml-1">已用 {t.usageCount} 次</span>}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedTemplateId && (
+                  <p className="text-xs text-primary">✓ 将按「{(seoTemplates as any[]).find((t: any) => t.id === selectedTemplateId)?.name}」模板结构生成文章</p>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <Label>文章语言</Label>
@@ -550,9 +614,9 @@ export default function AIContent() {
                 className="w-full gap-2"
                 size="lg"
                 onClick={handleGenerate}
-                disabled={generateMutation.isPending || !selectedKw}
+                disabled={(generateMutation.isPending || generateWithTemplateMutation.isPending) || !selectedKw}
               >
-                {generateMutation.isPending ? (
+                {(generateMutation.isPending || generateWithTemplateMutation.isPending) ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     AI 生成中，请稍候...
@@ -560,7 +624,7 @@ export default function AIContent() {
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4" />
-                    生成文章
+                    {selectedTemplateId ? "按模板生成文章" : "生成文章"}
                   </>
                 )}
               </Button>
@@ -616,6 +680,64 @@ export default function AIContent() {
         </div>
       </div>
 
+      {/* Long-tail Keyword Generation Dialog */}
+      <Dialog open={longTailDialogOpen} onOpenChange={setLongTailDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-purple-500" />
+              批量生成长尾关键词
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>核心关键词</Label>
+              <Input
+                placeholder="如：日本留学签证"
+                value={longTailCoreKw}
+                onChange={e => setLongTailCoreKw(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleLongTailGenerate()}
+              />
+              <p className="text-xs text-muted-foreground">AI 将围绕此核心词生成相关长尾关键词</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>生成数量：{longTailCount} 个</Label>
+              <input
+                type="range"
+                min={5}
+                max={50}
+                step={5}
+                value={longTailCount}
+                onChange={e => setLongTailCount(Number(e.target.value))}
+                className="w-full accent-purple-500"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>5 个</span>
+                <span>50 个</span>
+              </div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-3 text-xs text-purple-700 space-y-1">
+              <p className="font-medium">生成说明</p>
+              <p>• AI 分析核心词，生成相关长尾词（含疑问词、地域词、修饰词等）</p>
+              <p>• 生成后自动保存到关键词库，可直接用于文章生成</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="outline" onClick={() => setLongTailDialogOpen(false)}>取消</Button>
+            <Button
+              className="bg-purple-600 hover:bg-purple-700 text-white gap-2"
+              onClick={handleLongTailGenerate}
+              disabled={expandMutation.isPending || batchCreateMutation.isPending}
+            >
+              {(expandMutation.isPending || batchCreateMutation.isPending) ? (
+                <><Loader2 className="h-4 w-4 animate-spin" />生成中...</>
+              ) : (
+                <><Sparkles className="h-4 w-4" />生成并保存</>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Batch Dialog */}
       <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
         <DialogContent className="max-w-md">

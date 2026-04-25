@@ -45,6 +45,7 @@ export default function Settings() {
   const [form, setForm] = useState({
     // general
     siteName: "",
+    googleSiteNameSuffix: "",
     siteDescription: "",
     defaultLanguage: "zh-CN",
     timezone: "Asia/Shanghai",
@@ -148,6 +149,11 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Google Sites 网站名称后缀</Label>
+                <Input value={(form as any).googleSiteNameSuffix ?? ""} onChange={e => setField("googleSiteNameSuffix", e.target.value)} placeholder="如：免费下载 教程" />
+                <p className="text-xs text-muted-foreground">发布时网站名称 = 文章标题 + 后缀，如「日本签证流程 免费下载」。留空则仅用文章标题。</p>
               </div>
               <div className="space-y-1.5">
                 <Label>站点描述</Label>

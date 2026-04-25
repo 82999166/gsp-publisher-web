@@ -667,38 +667,58 @@ export class GoogleSitesPublisher {
     }
 
     // ── 阶段7：等待发布完成 ───────────────────────────────────────────────────
-    this.addLog('等待发布完成（最多 25 秒）...');
+    // 修复：不能用"复制已发布网站的链接"按钮判断（该按钮在发布前就已存在）
+    // 正确方式：监听 /publish/publish API 请求 + 等待弹窗消失
+    this.addLog('等待发布完成（监听发布 API 请求 + 等待弹窗关闭）...');
 
     let publishConfirmed = false;
+    let publishApiCalled = false;
+
+    // 设置网络请求监听，捕获真正的发布 API 调用
+    const publishApiListener = (req: any) => {
+      const reqUrl: string = req.url();
+      if (reqUrl.includes('/publish/publish') || reqUrl.includes('/publish/setpublishedstate') || reqUrl.includes('/publish/setpublished')) {
+        publishApiCalled = true;
+        this.addLog(`✅ 检测到发布 API 请求: ${reqUrl.split('?')[0]}`);
+      }
+    };
+    page.on('request', publishApiListener);
 
     try {
+      // 等待弹窗消失（最多 20 秒）——弹窗消失表示用户点击了确认发布
       await page.waitForFunction(
-        () => {
-          // 检查工具栏是否出现"复制已发布网站的链接"按钮（发布成功的标志）
-          const btns = Array.from(document.querySelectorAll('[aria-label]'));
-          return btns.some(b => {
-            const label = b.getAttribute('aria-label') || '';
-            return label.includes('复制已发布') || label.includes('Copy the published') ||
-              label.includes('已发布') || label.includes('Published') ||
-              label.includes('copy published');
-          });
-        },
-        { timeout: 25000 }
+        () => !document.querySelector('[role="dialog"]'),
+        { timeout: 20000 }
       );
-      this.addLog('✅ 工具栏出现"复制已发布网站的链接"，发布成功！');
+      this.addLog('✅ 发布弹窗已关闭，等待 Google Sites 处理发布请求...');
+      // 弹窗关闭后等待 6 秒，让 Google Sites 完成发布处理
+      await randomDelay(6000, 7000);
       publishConfirmed = true;
     } catch {
-      this.addLog('⚠️ 25 秒内未检测到发布成功标志，检查页面状态...');
+      this.addLog('⚠️ 20 秒内弹窗未关闭，可能发布按钮未被成功点击，截图调试...');
       try {
         await page.screenshot({ path: '/tmp/gsp_after_publish.png', fullPage: false });
         const pageState = await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('[aria-label]'));
-          const labels = btns.map(b => b.getAttribute('aria-label')).filter(Boolean);
-          const url = window.location.href;
-          return { labels: labels.slice(0, 20), url };
+          const dialog = document.querySelector('[role="dialog"]');
+          const btns = Array.from(dialog?.querySelectorAll('button, [role="button"]') || []);
+          return {
+            dialogExists: !!dialog,
+            dialogButtons: btns.map(b => ({ text: b.textContent?.trim().slice(0, 30), disabled: (b as HTMLButtonElement).disabled })),
+            url: window.location.href
+          };
         });
         this.addLog(`发布后页面状态: ${JSON.stringify(pageState)}`);
       } catch {}
+    }
+
+    // 移除网络请求监听
+    page.off('request', publishApiListener);
+
+    if (publishConfirmed && !publishApiCalled) {
+      this.addLog('⚠️ 弹窗已关闭但未检测到发布 API，可能 slug 已被占用或发布失败，额外等待 3 秒...');
+      await randomDelay(3000, 4000);
+      // 如果弹窗关闭且没有 API 请求，认为发布失败
+      publishConfirmed = false;
     }
 
     // 构建已发布 URL

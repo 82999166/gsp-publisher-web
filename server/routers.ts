@@ -862,6 +862,7 @@ const settingsRouter = router({
     // Map stored keys to form fields
     return {
       siteName: obj["site_name"] ?? "GSP Publisher",
+      googleSiteNameSuffix: obj["google_site_name_suffix"] ?? "",
       siteDescription: obj["site_description"] ?? "",
       defaultLanguage: obj["default_language"] ?? "zh-CN",
       timezone: obj["timezone"] ?? "Asia/Shanghai",
@@ -891,6 +892,7 @@ const settingsRouter = router({
 
   update: protectedProcedure.input(z.object({
     siteName: z.string().optional(),
+    googleSiteNameSuffix: z.string().optional(),
     siteDescription: z.string().optional(),
     defaultLanguage: z.string().optional(),
     timezone: z.string().optional(),
@@ -918,6 +920,7 @@ const settingsRouter = router({
   })).mutation(async ({ input }) => {
     const mapping: Record<string, string | undefined> = {
       site_name: input.siteName,
+      google_site_name_suffix: input.googleSiteNameSuffix,
       site_description: input.siteDescription,
       default_language: input.defaultLanguage,
       timezone: input.timezone,
@@ -1116,10 +1119,14 @@ async function runPublishTaskAsync(
   }
   const proxyConfig = (account as any).proxyConfig as any;
   const fingerprintData = (account as any).browserFingerprint as any;
+  // 读取网站名称后缀设置，构造 siteName = 文章标题 + 后缀
+  const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
+  const siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
+  const computedSiteName = siteNameSuffix ? `${material.title} ${siteNameSuffix}` : material.title;
   try {
     const result = await googleSitesPublisher.publish({
       cookieParsed: (account as any).cookieParsed as any[],
-      siteName: (account as any).defaultSiteName ?? "gsp-site",
+      siteName: computedSiteName,
       title: material.title,
       content: material.content,
       siteUrl,
