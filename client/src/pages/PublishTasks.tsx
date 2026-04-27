@@ -491,64 +491,105 @@ export default function PublishTasks() {
 
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-xl w-full">
-          <DialogHeader>
-            <DialogTitle>新建发布任务</DialogTitle>
-            <DialogDescription>配置自动化发布任务参数</DialogDescription>
+        <DialogContent className="max-w-lg w-full">
+          {/* 弹窗标题 */}
+          <DialogHeader className="pb-2 border-b">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <Zap className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <DialogTitle className="text-base">新建发布任务</DialogTitle>
+                <DialogDescription className="text-xs mt-0.5">配置自动化发布任务参数，创建后可立即执行或定时触发</DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>任务名称 <span className="text-destructive">*</span></Label>
-              <Input
-                placeholder="如：发布-关键词A-2026-04"
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              />
+
+          <div className="space-y-4 py-1">
+            {/* 基础信息区 */}
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">基础信息</p>
+              <div className="space-y-1.5">
+                <Label className="text-sm">任务名称 <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder="如：发布-关键词A-2026-04"
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">使用账号 <span className="text-destructive">*</span></Label>
+                <Select value={form.accountId} onValueChange={v => setForm(f => ({ ...f, accountId: v }))}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="选择 Google 账号" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(accounts as any[]).length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">暂无可用账号，请先在「账号管理」中添加</div>
+                    ) : (
+                      (accounts as any[]).map((a: any) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          <span className="font-medium">{a.name}</span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>使用账号 <span className="text-destructive">*</span></Label>
-              <Select value={form.accountId} onValueChange={v => setForm(f => ({ ...f, accountId: v }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择账号" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(accounts as any[]).map((a: any) => (
-                    <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            {/* 内容配置区 */}
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">内容配置</p>
+              <div className="space-y-1.5">
+                <Label className="text-sm">关联素材</Label>
+                <Select value={form.materialId} onValueChange={v => setForm(f => ({ ...f, materialId: v }))}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="选择已通过审核的素材（可选）" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">不关联素材</SelectItem>
+                    {(materials as any[]).map((m: any) => (
+                      <SelectItem key={m.id} value={String(m.id)}>
+                        <span className="truncate max-w-[280px] block">{m.title}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">素材需先在「AI 内容生成」中通过审核</p>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>关联素材（可选）</Label>
-              <Select value={form.materialId} onValueChange={v => setForm(f => ({ ...f, materialId: v }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择已通过审核的素材" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">不关联素材</SelectItem>
-                  {(materials as any[]).map((m: any) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.title}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>计划执行时间（可选）</Label>
-              <Input
-                type="datetime-local"
-                value={form.scheduledAt}
-                onChange={e => setForm(f => ({ ...f, scheduledAt: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">留空则立即执行</p>
+
+            {/* 执行计划区 */}
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">执行计划</p>
+              <div className="space-y-1.5">
+                <Label className="text-sm">计划执行时间</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.scheduledAt}
+                  onChange={e => setForm(f => ({ ...f, scheduledAt: e.target.value }))}
+                  className="h-9"
+                />
+                <p className="text-xs text-muted-foreground">留空则创建后可手动点击「执行」立即触发</p>
+              </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
-            <Button onClick={handleCreate} disabled={createMutation.isPending}>
-              {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              创建任务
-            </Button>
-          </DialogFooter>
+
+          {/* 底部操作栏 */}
+          <div className="flex items-center justify-between pt-2 border-t">
+            <p className="text-xs text-muted-foreground">
+              <span className="text-destructive">*</span> 为必填项
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>取消</Button>
+              <Button size="sm" onClick={handleCreate} disabled={createMutation.isPending} className="gap-1.5">
+                {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                创建任务
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

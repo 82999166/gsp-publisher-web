@@ -628,11 +628,36 @@ export class GoogleSitesPublisher {
       }
     }
 
+    // ── 阶段3.5：关闭所有残留弹窗 ──────────────────────────────────────────────
+    // 内嵌网站插入后，Google Sites 可能留有残留弹窗（如嵌入设置框）
+    // 必须先关闭，否则后续 waitForSelector('[role="dialog"]') 会匹配到错误的弹窗
+    this.addLog('检查并关闭所有残留弹窗...');
+    let closeAttempts = 0;
+    while (closeAttempts < 5) {
+      const hasDialog = await page.evaluate(() => !!document.querySelector('[role="dialog"]'));
+      if (!hasDialog) break;
+      this.addLog(`发现残留弹窗（第 ${closeAttempts + 1} 次），按 Escape 关闭...`);
+      await page.keyboard.press('Escape');
+      await randomDelay(800, 1200);
+      closeAttempts++;
+    }
+    await randomDelay(1000, 1500);
+    const dialogStillOpen = await page.evaluate(() => !!document.querySelector('[role="dialog"]'));
+    if (dialogStillOpen) {
+      this.addLog('⚠️ 弹窗仍未关闭，尝试点击页面空白区域...');
+      await page.mouse.click(100, 100);
+      await randomDelay(800, 1200);
+    } else {
+      this.addLog('✅ 所有残留弹窗已关闭');
+    }
+
     // ── 阶段4：等待自动保存 ──────────────────────────────────────────────────
     // Google Sites 编辑器会自动保存，等待 5 秒确保内容已保存
     this.addLog('等待 Google Sites 自动保存内容（5 秒）...');
-    await randomDelay(5000, 6000)    // ── 阶段5：点击右上角“发布”按鈕 ─────────────────────────────────────────────────
-    this.addLog('查找并点击发布按鈕...'); const publishBtnClicked = await page.evaluate(() => {
+    await randomDelay(5000, 6000);
+    // ── 阶段5：点击右上角"发布"按钮 ─────────────────────────────────────────────────
+    this.addLog('查找并点击发布按钮...');
+    const publishBtnClicked = await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
       const btn = buttons.find(b => {
         const text = b.textContent?.trim() || '';
