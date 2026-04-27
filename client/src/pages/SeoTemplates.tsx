@@ -560,6 +560,7 @@ export default function SeoTemplates() {
     name: "", type: "informational", description: "", promptTemplate: "",
     minWords: 800, maxWords: 1200,
     siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom",
+    siteTheme: "Simple",
   });
   const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
   const [previewMode, setPreviewMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
@@ -569,7 +570,7 @@ export default function SeoTemplates() {
   function openCreate() {
     setEditingTemplate(null);
     setBlocks([]);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom" });
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom", siteTheme: "Simple" });
     setShowEditor(true);
   }
   function openEdit(tpl: any) {
@@ -581,6 +582,7 @@ export default function SeoTemplates() {
       siteNameSuffix: tpl.siteNameSuffix ?? "", embedUrl: tpl.embedUrl ?? "",
       embedWidth: tpl.embedWidth ?? "100%", embedHeight: tpl.embedHeight ?? "300",
       embedPosition: tpl.embedPosition ?? "bottom",
+      siteTheme: tpl.siteTheme ?? "Simple",
     });
     setShowEditor(true);
   }
@@ -649,6 +651,7 @@ export default function SeoTemplates() {
       embedWidth: editorForm.embedWidth || undefined,
       embedHeight: editorForm.embedHeight || undefined,
       embedPosition: (editorForm.embedPosition as any) || undefined,
+      siteTheme: editorForm.siteTheme || "Simple",
     };
     if (editingTemplate) {
       updateMut.mutate({ id: editingTemplate.id, ...payload });
@@ -892,6 +895,25 @@ export default function SeoTemplates() {
                     />
                     <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
                   </div>
+                  {/* Google Sites 主题选择 */}
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Google Sites 主题</Label>
+                    <Select value={editorForm.siteTheme} onValueChange={v => setEditorForm(f => ({ ...f, siteTheme: v }))}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Simple">Simple（默认白底）</SelectItem>
+                        <SelectItem value="Diplomat">Diplomat（深蓝正式）</SelectItem>
+                        <SelectItem value="Vision">Vision（深色现代）</SelectItem>
+                        <SelectItem value="Impression">Impression（浅色简洁）</SelectItem>
+                        <SelectItem value="Coral">Coral（暖色调）</SelectItem>
+                        <SelectItem value="Spearmint">Spearmint（绿色清新）</SelectItem>
+                        <SelectItem value="Tropic">Tropic（热带风格）</SelectItem>
+                        <SelectItem value="Luxe">Luxe（奢华深色）</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">发布时自动应用选定主题，留意不同主题的字体和颜色风格</p>
+                  </div>
+
                   <div className="space-y-1.5">
                     <Label className="text-xs">模板内嵌网站 URL</Label>
                     <Input

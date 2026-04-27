@@ -1008,6 +1008,7 @@ const seoTemplatesRouter = router({
     embedWidth: z.string().optional(),
     embedHeight: z.string().optional(),
     embedPosition: z.enum(["top", "bottom"]).optional(),
+    siteTheme: z.string().optional(),
   })).mutation(async ({ input }) => {
     await createSeoTemplate({ ...input, isPreset: false, isActive: true });
     return { success: true };
@@ -1027,6 +1028,7 @@ const seoTemplatesRouter = router({
     embedWidth: z.string().optional(),
     embedHeight: z.string().optional(),
     embedPosition: z.enum(["top", "bottom"]).optional(),
+    siteTheme: z.string().optional(),
   })).mutation(async ({ input }) => {
     const { id, ...data } = input;
     await updateSeoTemplate(id, data);
@@ -1152,9 +1154,9 @@ async function runPublishTaskAsync(
   const proxyConfig = (account as any).proxyConfig as any;
   const fingerprintData = (account as any).browserFingerprint as any;
   // 读取网站名称后缀设置，优先使用模板的 siteNameSuffix，其次用系统设置
-  let siteNameSuffix = "";
+   let siteNameSuffix = "";
+  let siteTheme = "Simple";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
-
   if ((material as any).seoTemplateId) {
     try {
       const tpl = await getSeoTemplateById((material as any).seoTemplateId);
@@ -1162,6 +1164,10 @@ async function runPublishTaskAsync(
         // 优先使用模板的站点名称后缀
         if ((tpl as any).siteNameSuffix) {
           siteNameSuffix = ((tpl as any).siteNameSuffix as string).trim();
+        }
+        // 读取模板的 Google Sites 主题
+        if ((tpl as any).siteTheme) {
+          siteTheme = ((tpl as any).siteTheme as string).trim() || "Simple";
         }
         // 读取模板的内嵌网站配置
         if ((tpl as any).embedUrl) {
@@ -1205,6 +1211,7 @@ async function runPublishTaskAsync(
       headless: true,
       timeout: 120000,
       embedBlocks: embedBlocks.length > 0 ? embedBlocks : undefined,
+      siteTheme: siteTheme !== 'Simple' ? siteTheme : undefined,
     });
     if (result.success) {
       await updatePublishTask(taskId, {

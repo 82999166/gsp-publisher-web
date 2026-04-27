@@ -96,6 +96,8 @@ export interface PublishOptions {
   timeout?: number;
   /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置） */
   embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>;
+  /** Google Sites 主题名称（发布后自动应用，如 "Simple"、"Diplomat"、"Vision" 等） */
+  siteTheme?: string;
 }
 
 export interface CookieEntry {
@@ -1008,6 +1010,15 @@ export class GoogleSitesPublisher {
       // 写入内容并发布
       const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks);
 
+      // 应用 Google Sites 主题（发布完成后切换主题）
+      if (options.siteTheme && options.siteTheme !== 'Simple') {
+        try {
+          await this.applyTheme(page, options.siteTheme);
+        } catch (themeErr) {
+          this.addLog(`主题应用失败（不影响发布结果）: ${themeErr}`);
+        }
+      }
+
       this.addLog("发布任务完成！");
       return {
         success: true,
@@ -1029,6 +1040,101 @@ export class GoogleSitesPublisher {
         this.browser = null;
         this.addLog("浏览器已关闭");
       }
+    }
+  }
+
+  /**
+   * 应用 Google Sites 主题
+   * 在发布完成后，通过主题面板选择指定主题
+   */
+  private async applyTheme(page: Page, themeName: string): Promise<void> {
+    this.addLog(`开始应用主题: ${themeName}`);
+
+    // 点击工具栏中的主题按鈕（通常标注为 "主题" 或 "Themes"）
+    const themeBtnClicked = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+      const btn = btns.find(b => {
+        const text = b.textContent?.trim() || '';
+        const ariaLabel = b.getAttribute('aria-label') || '';
+        return text === '主题' || text === 'Themes' || text === 'Theme'
+          || ariaLabel === '主题' || ariaLabel === 'Themes' || ariaLabel === 'Theme';
+      });
+      if (btn) { (btn as HTMLElement).click(); return true; }
+      return false;
+    });
+
+    if (!themeBtnClicked) {
+      this.addLog('⚠️ 未找到主题按鈕，尝试通过导航栏查找...');
+      // 尝试在导航栏找到主题入口
+      const navThemeClicked = await page.evaluate(() => {
+        const allEls = Array.from(document.querySelectorAll('[data-tooltip], [title], [aria-label]'));
+        const el = allEls.find(e => {
+          const tip = e.getAttribute('data-tooltip') || e.getAttribute('title') || e.getAttribute('aria-label') || '';
+          return tip.includes('主题') || tip.toLowerCase().includes('theme');
+        });
+        if (el) { (el as HTMLElement).click(); return true; }
+        return false;
+      });
+      if (!navThemeClicked) {
+        this.addLog('⚠️ 未找到主题入口，跳过主题设置');
+        return;
+      }
+    }
+
+    this.addLog('已点击主题按鈕，等待主题面板加载...');
+    await randomDelay(2000, 3000);
+
+    // 在主题面板中查找目标主题
+    const themeApplied = await page.evaluate((targetTheme: string) => {
+      // 查找主题列表中匹配目标主题名称的元素
+      const allEls = Array.from(document.querySelectorAll('[data-theme-name], [aria-label], [title], button, [role="button"]'));
+      const themeEl = allEls.find(el => {
+        const themeName = el.getAttribute('data-theme-name') || '';
+        const ariaLabel = el.getAttribute('aria-label') || '';
+        const title = el.getAttribute('title') || '';
+        const text = el.textContent?.trim() || '';
+        return themeName === targetTheme
+          || ariaLabel === targetTheme
+          || title === targetTheme
+          || text === targetTheme;
+      });
+      if (themeEl) {
+        (themeEl as HTMLElement).click();
+        return true;
+      }
+      // 输出所有元素的主题相关属性，便于调试
+      return JSON.stringify(allEls.slice(0, 20).map(e => ({
+        tag: e.tagName,
+        dataTheme: e.getAttribute('data-theme-name'),
+        aria: e.getAttribute('aria-label'),
+        title: e.getAttribute('title'),
+        text: e.textContent?.trim().slice(0, 30),
+      })));
+    }, themeName);
+
+    if (themeApplied === true) {
+      this.addLog(`✅ 主题 "${themeName}" 已选中，等待应用...`);
+      await randomDelay(2000, 3000);
+
+      // 查找并点击确认按鈕（如果有）
+      const confirmClicked = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+        const btn = btns.find(b => {
+          const text = b.textContent?.trim() || '';
+          return text === '应用' || text === 'Apply' || text === '确定' || text === 'OK';
+        });
+        if (btn) { (btn as HTMLElement).click(); return true; }
+        return false;
+      });
+      if (confirmClicked) {
+        this.addLog('已点击确认应用主题');
+        await randomDelay(2000, 3000);
+      }
+
+      // 保存主题设置（自动保存）
+      this.addLog(`✅ 主题 "${themeName}" 应用完成`);
+    } else {
+      this.addLog(`⚠️ 未找到主题 "${themeName}"，调试信息: ${typeof themeApplied === 'string' ? themeApplied.slice(0, 200) : themeApplied}`);
     }
   }
 

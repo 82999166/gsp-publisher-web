@@ -82,6 +82,8 @@ export const seoTemplates = mysqlTable("seo_templates", {
   embedWidth: varchar("embedWidth", { length: 32 }).default("100%"),
   embedHeight: varchar("embedHeight", { length: 32 }).default("600px"),
   embedPosition: mysqlEnum("embedPosition", ["top", "bottom"]).default("bottom"),
+  // Google Sites 主题设置（发布时自动应用）
+  siteTheme: varchar("siteTheme", { length: 64 }).default("Simple"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
