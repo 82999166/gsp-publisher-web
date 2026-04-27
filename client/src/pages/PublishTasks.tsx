@@ -491,7 +491,7 @@ export default function PublishTasks() {
 
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-xl w-full">
           <DialogHeader>
             <DialogTitle>新建发布任务</DialogTitle>
             <DialogDescription>配置自动化发布任务参数</DialogDescription>
@@ -560,7 +560,7 @@ export default function PublishTasks() {
         setLogOpen(open);
         if (!open) setViewLogTask(null);
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl w-full">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ScrollText className="h-4 w-4" />
@@ -577,7 +577,7 @@ export default function PublishTasks() {
               <DialogDescription>发布引擎正在后台运行，每2秒自动刷新日志...</DialogDescription>
             )}
           </DialogHeader>
-          <div className="bg-zinc-950 rounded-lg p-4 h-80 overflow-y-auto font-mono text-xs">
+          <div className="bg-zinc-950 rounded-lg p-4 h-[520px] overflow-y-auto font-mono text-xs">
             {logLines.length === 0 ? (
               <p className="text-zinc-500">等待日志输出...</p>
             ) : (
