@@ -34,7 +34,9 @@ import {
   Plus,
   RefreshCw,
   ScrollText,
+  Terminal,
   Trash2,
+  X,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -491,42 +493,49 @@ export default function PublishTasks() {
 
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg w-full">
-          {/* 弹窗标题 */}
-          <DialogHeader className="pb-2 border-b">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                <Zap className="h-4 w-4 text-primary" />
+        <DialogContent className="max-w-xl w-full p-0 overflow-hidden gap-0">
+          {/* 顶部渐变标题栏 */}
+          <div className="bg-gradient-to-r from-primary to-primary/80 px-6 py-5 text-primary-foreground">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 shadow-sm">
+                <Zap className="h-5 w-5 text-white" />
               </div>
               <div>
-                <DialogTitle className="text-base">新建发布任务</DialogTitle>
-                <DialogDescription className="text-xs mt-0.5">配置自动化发布任务参数，创建后可立即执行或定时触发</DialogDescription>
+                <DialogTitle className="text-lg font-semibold text-white">新建发布任务</DialogTitle>
+                <DialogDescription className="text-xs text-white/70 mt-0.5">配置参数后立即执行或定时触发</DialogDescription>
               </div>
             </div>
-          </DialogHeader>
+          </div>
 
-          <div className="space-y-4 py-1">
-            {/* 基础信息区 */}
-            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">基础信息</p>
-              <div className="space-y-1.5">
-                <Label className="text-sm">任务名称 <span className="text-destructive">*</span></Label>
-                <Input
-                  placeholder="如：发布-关键词A-2026-04"
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="h-9"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">使用账号 <span className="text-destructive">*</span></Label>
+          <div className="px-6 py-5 space-y-5">
+            {/* 任务名称 */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-1">
+                任务名称
+                <span className="text-destructive text-xs">*</span>
+              </Label>
+              <Input
+                placeholder="如：发布-关键词A-2026-04"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                className="h-10 bg-muted/40 border-muted-foreground/20 focus:bg-background transition-colors"
+              />
+            </div>
+
+            {/* 两栏：账号 + 素材 */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium flex items-center gap-1">
+                  Google 账号
+                  <span className="text-destructive text-xs">*</span>
+                </Label>
                 <Select value={form.accountId} onValueChange={v => setForm(f => ({ ...f, accountId: v }))}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="选择 Google 账号" />
+                  <SelectTrigger className="h-10 bg-muted/40 border-muted-foreground/20">
+                    <SelectValue placeholder="选择账号" />
                   </SelectTrigger>
                   <SelectContent>
                     {(accounts as any[]).length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-muted-foreground">暂无可用账号，请先在「账号管理」中添加</div>
+                      <div className="px-3 py-2 text-xs text-muted-foreground">暂无账号，请先添加</div>
                     ) : (
                       (accounts as any[]).map((a: any) => (
                         <SelectItem key={a.id} value={String(a.id)}>
@@ -537,55 +546,53 @@ export default function PublishTasks() {
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            {/* 内容配置区 */}
-            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">内容配置</p>
-              <div className="space-y-1.5">
-                <Label className="text-sm">关联素材</Label>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-muted-foreground">关联素材</Label>
                 <Select value={form.materialId} onValueChange={v => setForm(f => ({ ...f, materialId: v }))}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="选择已通过审核的素材（可选）" />
+                  <SelectTrigger className="h-10 bg-muted/40 border-muted-foreground/20">
+                    <SelectValue placeholder="选择素材（可选）" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">不关联素材</SelectItem>
                     {(materials as any[]).map((m: any) => (
                       <SelectItem key={m.id} value={String(m.id)}>
-                        <span className="truncate max-w-[280px] block">{m.title}</span>
+                        <span className="truncate max-w-[180px] block">{m.title}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">素材需先在「AI 内容生成」中通过审核</p>
               </div>
             </div>
 
-            {/* 执行计划区 */}
-            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">执行计划</p>
-              <div className="space-y-1.5">
-                <Label className="text-sm">计划执行时间</Label>
+            {/* 执行时间 */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-muted-foreground">计划执行时间</Label>
+              <div className="relative">
                 <Input
                   type="datetime-local"
                   value={form.scheduledAt}
                   onChange={e => setForm(f => ({ ...f, scheduledAt: e.target.value }))}
-                  className="h-9"
+                  className="h-10 bg-muted/40 border-muted-foreground/20 focus:bg-background transition-colors"
                 />
-                <p className="text-xs text-muted-foreground">留空则创建后可手动点击「执行」立即触发</p>
               </div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                留空则创建后立即可手动触发执行
+              </p>
             </div>
           </div>
 
           {/* 底部操作栏 */}
-          <div className="flex items-center justify-between pt-2 border-t">
+          <div className="flex items-center justify-between px-6 py-4 bg-muted/30 border-t">
             <p className="text-xs text-muted-foreground">
-              <span className="text-destructive">*</span> 为必填项
+              <span className="text-destructive font-bold">*</span> 标注为必填项
             </p>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>取消</Button>
-              <Button size="sm" onClick={handleCreate} disabled={createMutation.isPending} className="gap-1.5">
-                {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            <div className="flex items-center gap-2.5">
+              <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="h-9 px-4">
+                取消
+              </Button>
+              <Button size="sm" onClick={handleCreate} disabled={createMutation.isPending} className="h-9 px-5 gap-1.5 shadow-sm">
+                {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                 创建任务
               </Button>
             </div>
@@ -595,63 +602,118 @@ export default function PublishTasks() {
 
       {/* Log Dialog */}
       <Dialog open={logOpen} onOpenChange={(open) => {
-        if (!open && isExecuting) {
-          // 执行中允许关闭对话框，但继续后台轮询
-        }
         setLogOpen(open);
         if (!open) setViewLogTask(null);
       }}>
-        <DialogContent className="max-w-3xl w-full">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScrollText className="h-4 w-4" />
-              {isExecuting ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                  发布引擎运行日志（实时更新）
+        <DialogContent className="max-w-3xl w-full p-0 overflow-hidden gap-0">
+          {/* 顶部标题栏 */}
+          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700">
+            <div className="flex items-center gap-3">
+              {/* macOS 风格圆点 */}
+              <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                <div className="w-3 h-3 rounded-full bg-green-500/80" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Terminal className="h-3.5 w-3.5 text-slate-400" />
+                <span className="text-slate-200 text-sm font-medium">
+                  {isExecuting ? "发布引擎 — 实时日志" : `任务日志${viewLogTask ? ` · ${viewLogTask.name}` : ""}`}
                 </span>
-              ) : (
-                `任务日志${viewLogTask ? ` — ${viewLogTask.name}` : ""}`
-              )}
-            </DialogTitle>
-            {isExecuting && (
-              <DialogDescription>发布引擎正在后台运行，每2秒自动刷新日志...</DialogDescription>
-            )}
-          </DialogHeader>
-          <div className="bg-zinc-950 rounded-lg p-4 h-[520px] overflow-y-auto font-mono text-xs">
+                {isExecuting && (
+                  <span className="flex items-center gap-1 text-xs text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    运行中
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => { setLogOpen(false); setViewLogTask(null); }}
+              className="text-slate-500 hover:text-slate-300 transition-colors p-1 rounded"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* 状态栏 */}
+          {isExecuting && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-slate-900/80 border-b border-slate-700/50 text-xs text-slate-400">
+              <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+              <span>后台自动刷新中，每 2 秒更新一次</span>
+              <span className="ml-auto text-slate-600">{logLines.length} 条日志</span>
+            </div>
+          )}
+
+          {/* 日志内容区 */}
+          <div className="bg-[#0d1117] h-[480px] overflow-y-auto font-mono text-xs p-4 space-y-0.5">
             {logLines.length === 0 ? (
-              <p className="text-zinc-500">等待日志输出...</p>
+              <div className="flex items-center gap-2 text-slate-500 mt-8 justify-center">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>等待日志输出...</span>
+              </div>
             ) : (
-              logLines.map((line, i) => (
-                <div
-                  key={i}
-                  className={`leading-5 ${
-                    line.includes("✅") || line.includes("成功")
-                      ? "text-emerald-400"
-                      : line.includes("❌") || line.includes("失败") || line.includes("错误") || line.includes("异常")
-                      ? "text-red-400"
-                      : line.includes("⚠") || line.includes("警告")
-                      ? "text-amber-400"
-                      : "text-zinc-300"
-                  }`}
-                >
-                  {line}
-                </div>
-              ))
+              logLines.map((line, i) => {
+                const isSuccess = line.includes("✅") || (line.includes("成功") && !line.includes("失败"));
+                const isError = line.includes("❌") || line.includes("失败") || line.includes("错误") || line.includes("异常");
+                const isWarn = line.includes("⚠") || line.includes("警告");
+                const isInfo = line.includes("阶段") || line.includes("开始") || line.includes("等待");
+                return (
+                  <div key={i} className="flex items-start gap-2 group hover:bg-white/[0.02] rounded px-1 py-0.5">
+                    {/* 行号 */}
+                    <span className="text-slate-700 select-none w-6 text-right shrink-0 pt-px">{i + 1}</span>
+                    {/* 状态标签 */}
+                    <span className={`shrink-0 pt-px ${
+                      isSuccess ? "text-emerald-500" :
+                      isError ? "text-red-500" :
+                      isWarn ? "text-amber-500" :
+                      isInfo ? "text-blue-400" :
+                      "text-slate-600"
+                    }`}>
+                      {isSuccess ? "●" : isError ? "●" : isWarn ? "●" : "·"}
+                    </span>
+                    {/* 日志文本 */}
+                    <span className={`leading-5 break-all ${
+                      isSuccess ? "text-emerald-400" :
+                      isError ? "text-red-400" :
+                      isWarn ? "text-amber-400" :
+                      isInfo ? "text-sky-300" :
+                      "text-slate-300"
+                    }`}>
+                      {line}
+                    </span>
+                  </div>
+                );
+              })
             )}
             <div ref={logEndRef} />
           </div>
-          <DialogFooter>
+
+          {/* 底部操作栏 */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-t border-slate-700/50">
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              {!isExecuting && logLines.length > 0 && (
+                <span className={`flex items-center gap-1.5 ${
+                  logLines.some(l => l.includes("✅") || l.includes("发布成功")) ? "text-emerald-500" :
+                  logLines.some(l => l.includes("❌") || l.includes("发布失败")) ? "text-red-500" :
+                  "text-slate-400"
+                }`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {logLines.some(l => l.includes("✅") || l.includes("发布成功")) ? "任务已成功完成" :
+                   logLines.some(l => l.includes("❌") || l.includes("发布失败")) ? "任务执行失败" :
+                   "任务已结束"}
+                </span>
+              )}
+            </div>
             <Button
+              size="sm"
               variant="outline"
-              onClick={() => {
-                setLogOpen(false);
-                setViewLogTask(null);
-              }}
+              className="bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
+              onClick={() => { setLogOpen(false); setViewLogTask(null); }}
             >
-              {isExecuting ? "后台继续执行，关闭日志" : "关闭"}
+              {isExecuting ? "后台继续执行，关闭" : "关闭"}
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

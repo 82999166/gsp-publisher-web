@@ -1157,6 +1157,7 @@ async function runPublishTaskAsync(
    let siteNameSuffix = "";
   let siteTheme = "Simple";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
+  let templateStructure: Array<{ type: 'h1' | 'h2' | 'h3' | 'p' | 'embed' | 'faq'; embedUrl?: string; embedWidth?: string; embedHeight?: number | string }> | undefined;
   if ((material as any).seoTemplateId) {
     try {
       const tpl = await getSeoTemplateById((material as any).seoTemplateId);
@@ -1169,22 +1170,34 @@ async function runPublishTaskAsync(
         if ((tpl as any).siteTheme) {
           siteTheme = ((tpl as any).siteTheme as string).trim() || "Simple";
         }
-        // 读取模板的内嵌网站配置
-        if ((tpl as any).embedUrl) {
+        // 读取模板的完整板块结构（优先使用 structure）
+        // templateStructure 已在外层声明
+        if (tpl.structure) {
+          const rawStructure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
+          // DB 存储格式可能是 { blocks: [...] } 或直接是 [...]
+          const structure = Array.isArray(rawStructure) ? rawStructure : (rawStructure?.blocks ?? []);
+          if (Array.isArray(structure) && structure.length > 0) {
+            // 使用模板的完整板块结构，嵌入板块使用模板配置的 URL
+            templateStructure = (structure as any[]).map((b: any) => {
+              if (b.type === 'embed') {
+                return {
+                  type: 'embed' as const,
+                  embedUrl: (b.embedUrl || (tpl as any).embedUrl || '') as string,
+                  embedWidth: (b.embedWidth || (tpl as any).embedWidth || '100%') as string,
+                  embedHeight: b.embedHeight || (tpl as any).embedHeight || 300,
+                };
+              }
+              return { type: b.type as 'h1' | 'h2' | 'h3' | 'p' | 'faq' };
+            });
+          }
+        } else if ((tpl as any).embedUrl) {
+          // 兼容旧版：没有 structure 但有 embedUrl
           embedBlocks = [{
             embedUrl: (tpl as any).embedUrl as string,
-            embedWidth: ((tpl as any).embedWidth as string) || "100%",
-            embedHeight: ((tpl as any).embedHeight as string) || "600px",
-            embedPosition: ((tpl as any).embedPosition as string) || "bottom",
+            embedWidth: ((tpl as any).embedWidth as string) || '100%',
+            embedHeight: ((tpl as any).embedHeight as string) || '600px',
+            embedPosition: ((tpl as any).embedPosition as string) || 'bottom',
           }];
-        } else if (tpl.structure) {
-          // 兼容旧版：从 structure 中提取 embed 板块
-          const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
-          if (Array.isArray(structure)) {
-            const structureEmbeds = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
-              .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as string | undefined }));
-            if (structureEmbeds.length > 0) embedBlocks = structureEmbeds;
-          }
         }
       }
     } catch (e) {
@@ -1212,6 +1225,7 @@ async function runPublishTaskAsync(
       timeout: 120000,
       embedBlocks: embedBlocks.length > 0 ? embedBlocks : undefined,
       siteTheme: siteTheme !== 'Simple' ? siteTheme : undefined,
+      templateStructure: templateStructure,
     });
     if (result.success) {
       await updatePublishTask(taskId, {

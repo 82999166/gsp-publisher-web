@@ -94,10 +94,17 @@ export interface PublishOptions {
   headless?: boolean;
   /** 操作超时（毫秒，默认 120000） */
   timeout?: number;
-  /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置） */
+  /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置，已废弃，用 templateStructure 替代） */
   embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>;
   /** Google Sites 主题名称（发布后自动应用，如 "Simple"、"Diplomat"、"Vision" 等） */
   siteTheme?: string;
+  /** SEO 模板的完整板块结构（按顺序写入内容） */
+  templateStructure?: Array<{
+    type: 'h1' | 'h2' | 'h3' | 'p' | 'embed' | 'faq';
+    embedUrl?: string;
+    embedWidth?: string;
+    embedHeight?: number | string;
+  }>;
 }
 
 export interface CookieEntry {
@@ -141,13 +148,17 @@ function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" |
     } else if (trimmed.startsWith("# ")) {
       sections.push({ type: "h1", text: trimmed.slice(2).trim() });
     } else {
+      // 跳过 iframe/embed HTML 标签行（AI 生成内容可能包含 <iframe> 代码）
+      if (trimmed.startsWith('<iframe') || trimmed.startsWith('<embed') || trimmed.startsWith('<object')) continue;
       const plain = trimmed
         .replace(/\*\*(.*?)\*\*/g, "$1")
         .replace(/\*(.*?)\*/g, "$1")
         .replace(/`(.*?)`/g, "$1")
         .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
         .replace(/^[-*+]\s+/, "")
-        .replace(/^\d+\.\s+/, "");
+        .replace(/^\d+\.\s+/, "")
+        // 移除行内 HTML 标签（如 <br>、<b> 等）
+        .replace(/<[^>]+>/g, "");
       if (plain) sections.push({ type: "p", text: plain });
     }
   }
@@ -499,7 +510,14 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>): Promise<string> {
+  private async writeContentAndPublish(
+    page: Page,
+    title: string,
+    content: string,
+    siteName: string,
+    embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>,
+    templateStructure?: Array<{ type: 'h1' | 'h2' | 'h3' | 'p' | 'embed' | 'faq'; embedUrl?: string; embedWidth?: string; embedHeight?: number | string }>
+  ): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -553,10 +571,133 @@ export class GoogleSitesPublisher {
       this.addLog(`调试信息获取失败: ${debugErr}`);
     }
 
+    // ── 阶段1.5：设置网站名称 ────────────────────────────────────────────────
+    // Google Sites 编辑器顶部有「输入网站名称」占位符，需要点击并填写
+    this.addLog(`设置网站名称: ${siteName}`);
+    try {
+      // 找到网站名称输入区域（通常是顶部的 contenteditable 或 input，placeholder 为「输入网站名称」）
+      const siteNameSet = await page.evaluate((name: string) => {
+        // 方式1：找 placeholder 包含「网站名称」的 contenteditable
+        const allEditable = Array.from(document.querySelectorAll('[contenteditable]')) as HTMLElement[];
+        const nameEl = allEditable.find(el => {
+          const ph = el.getAttribute('data-placeholder') || el.getAttribute('placeholder') || '';
+          const text = el.textContent?.trim() || '';
+          return ph.includes('网站名称') || ph.includes('site name') || text.includes('输入网站名称') || text === '未命名网站';
+        });
+        if (nameEl) {
+          nameEl.focus();
+          nameEl.click();
+          // 全选并替换
+          document.execCommand('selectAll');
+          document.execCommand('insertText', false, name);
+          return { method: 'contenteditable', success: true };
+        }
+        // 方式2：找 aria-label 包含「网站名称」的 input
+        const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+        const nameInput = inputs.find(i => {
+          const label = (i.getAttribute('aria-label') || '').toLowerCase();
+          return label.includes('网站名称') || label.includes('site name');
+        });
+        if (nameInput) {
+          nameInput.focus();
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (setter) setter.call(nameInput, name);
+          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+          return { method: 'input', success: true };
+        }
+        return { method: 'none', success: false };
+      }, siteName);
+      this.addLog(`网站名称设置结果: ${JSON.stringify(siteNameSet)}`);
+      if (siteNameSet.success) {
+        await randomDelay(500, 800);
+        // 按 Enter 或 Escape 确认，然后点击页面其他区域
+        await page.keyboard.press('Escape');
+        await randomDelay(300, 500);
+      }
+    } catch (e) {
+      this.addLog(`设置网站名称失败（非致命）: ${e}`);
+    }
+
     // ── 阶段2：激活编辑器并写入内容 ─────────────────────────────────────────
     // Google Sites 新建站点后，页面上有一个默认的文本块（"点击以添加内容"）
     // 需要先单击激活，然后输入内容
     let contentWritten = false;
+
+    // 辅助函数：按模板板块顺序写入内容（含嵌入网站）
+    const writeByTemplate = async (tplStructure: Array<{ type: string; embedUrl?: string; embedWidth?: string; embedHeight?: number | string }>) => {
+      this.addLog(`按模板板块顺序写入，共 ${tplStructure.length} 个板块`);
+      const h1Sections = sections.filter(s => s.type === 'h1');
+      const h2Sections = sections.filter(s => s.type === 'h2');
+      const h3Sections = sections.filter(s => s.type === 'h3');
+      const pSections = sections.filter(s => s.type === 'p');
+      let h1Idx = 0, h2Idx = 0, h3Idx = 0, pIdx = 0;
+
+      for (let bi = 0; bi < tplStructure.length; bi++) {
+        const block = tplStructure[bi];
+        if (block.type === 'embed') {
+          this.addLog(`插入嵌入板块: ${block.embedUrl}`);
+          await randomDelay(300, 500);
+          const heightNum = typeof block.embedHeight === 'string'
+            ? parseInt(block.embedHeight as string) || 300
+            : (block.embedHeight as number ?? 300);
+          await this.insertEmbedBlock(page, block.embedUrl!, heightNum);
+          await randomDelay(1000, 1500);
+          // 嵌入后重新激活文本区域
+          try {
+            await page.keyboard.press('Escape');
+            await randomDelay(200, 300);
+            await page.mouse.click(640, 700);
+            await randomDelay(300, 500);
+          } catch {}
+        } else if (block.type === 'faq') {
+          // FAQ：写入剩余所有段落
+          while (pIdx < pSections.length) {
+            await page.keyboard.type(pSections[pIdx].text, { delay: 8 });
+            await page.keyboard.press('Enter');
+            await randomDelay(10, 30);
+            pIdx++;
+          }
+        } else if (block.type === 'h1') {
+          const s = h1Sections[h1Idx++];
+          const text = s ? s.text : title;
+          await page.keyboard.type(text, { delay: 15 });
+          await page.keyboard.press('Enter');
+          await randomDelay(50, 100);
+        } else if (block.type === 'h2') {
+          const s = h2Sections[h2Idx++];
+          if (s) {
+            await page.keyboard.type(s.text, { delay: 10 });
+            await page.keyboard.press('Enter');
+            await randomDelay(50, 100);
+            // 写入该 H2 后的段落，直到下一个标题/嵌入板块
+            const nextBlock = tplStructure[bi + 1];
+            const stopAtNext = nextBlock && (nextBlock.type === 'embed' || nextBlock.type === 'h2' || nextBlock.type === 'h3' || nextBlock.type === 'h1');
+            while (pIdx < pSections.length) {
+              await page.keyboard.type(pSections[pIdx].text, { delay: 8 });
+              await page.keyboard.press('Enter');
+              await randomDelay(10, 30);
+              pIdx++;
+              if (stopAtNext) break;
+            }
+          }
+        } else if (block.type === 'h3') {
+          const s = h3Sections[h3Idx++];
+          if (s) {
+            await page.keyboard.type(s.text, { delay: 10 });
+            await page.keyboard.press('Enter');
+            await randomDelay(50, 100);
+          }
+        } else if (block.type === 'p') {
+          const s = pSections[pIdx++];
+          if (s) {
+            await page.keyboard.type(s.text, { delay: 8 });
+            await page.keyboard.press('Enter');
+            await randomDelay(10, 30);
+          }
+        }
+      }
+    };
 
     // 策略1：找到 contenteditable 元素直接点击激活
     const editableSelectors = [
@@ -582,17 +723,30 @@ export class GoogleSitesPublisher {
           await page.keyboard.press('Delete');
           await randomDelay(100, 200);
 
-          // 写入标题
-          await page.keyboard.type(title, { delay: 15 });
-          await page.keyboard.press('Enter');
-          await randomDelay(100, 200);
-
-          // 写入正文
-          for (const section of sections) {
-            if (section.type === 'h1') continue; // 标题已写入
-            await page.keyboard.type(section.text, { delay: 8 });
+          if (templateStructure && templateStructure.length > 0) {
+            // 有模板结构：按板块顺序写入
+            await writeByTemplate(templateStructure);
+          } else {
+            // 无模板结构：直接写入所有内容（兼容旧逻辑）
+            await page.keyboard.type(title, { delay: 15 });
             await page.keyboard.press('Enter');
-            await randomDelay(10, 30);
+            await randomDelay(100, 200);
+            for (const section of sections) {
+              if (section.type === 'h1') continue;
+              await page.keyboard.type(section.text, { delay: 8 });
+              await page.keyboard.press('Enter');
+              await randomDelay(10, 30);
+            }
+            // 旧逻辑：内容写完后插入嵌入板块
+            if (embedBlocks && embedBlocks.length > 0) {
+              for (const block of embedBlocks) {
+                if (block.embedUrl) {
+                  const heightNum = typeof block.embedHeight === 'string' ? parseInt(block.embedHeight) || 600 : (block.embedHeight ?? 600);
+                  await this.insertEmbedBlock(page, block.embedUrl, heightNum);
+                  await randomDelay(1000, 1500);
+                }
+              }
+            }
           }
 
           contentWritten = true;
@@ -608,11 +762,8 @@ export class GoogleSitesPublisher {
     if (!contentWritten) {
       this.addLog('未找到 contenteditable 元素，尝试点击页面中央激活编辑器...');
       try {
-        // 点击页面中央
         await page.mouse.click(640, 400);
         await randomDelay(500, 800);
-
-        // 再次检查是否有 contenteditable 出现
         const el = await page.$('[contenteditable="true"]');
         if (el) {
           await page.keyboard.down('Control');
@@ -620,7 +771,6 @@ export class GoogleSitesPublisher {
           await page.keyboard.up('Control');
           await page.keyboard.press('Delete');
           await randomDelay(100, 200);
-
           await page.keyboard.type(title, { delay: 15 });
           await page.keyboard.press('Enter');
           for (const section of sections) {
@@ -639,18 +789,6 @@ export class GoogleSitesPublisher {
 
     if (!contentWritten) {
       this.addLog('⚠️ 内容写入失败，将继续尝试发布（站点标题将为默认值）');
-    }
-
-    // ── 阶段3：插入内嵌网站板块（如果有）──────────────────────────────────────
-    if (embedBlocks && embedBlocks.length > 0) {
-      this.addLog(`开始插入 ${embedBlocks.length} 个内嵌网站板块...`);
-      for (const block of embedBlocks) {
-        if (block.embedUrl) {
-          const heightNum = typeof block.embedHeight === 'string' ? parseInt(block.embedHeight) || 600 : (block.embedHeight ?? 600);
-          await this.insertEmbedBlock(page, block.embedUrl, heightNum);
-          await randomDelay(1000, 1500);
-        }
-      }
     }
 
         // ── 阶段3.5：关闭嵌入类残留弹窗 ─────────────────────────────────────
@@ -773,24 +911,23 @@ export class GoogleSitesPublisher {
         input.dispatchEvent(new Event('change', { bubbles: true }));
       }
 
-      // URL 框：ariaLabel 为"网站名称"/"Site name"/"Web address"，或初始值为空
-      const urlInput = inputs.find(i => {
-        const label = (i.getAttribute('aria-label') || '').toLowerCase();
-        return label.includes('网站名称') || label.includes('site name') || label.includes('web address') || label.includes('url');
-      }) || inputs.find(i => i.value === '');
+      // Google Sites 发布弹窗里只有 1 个 text input，就是 URL slug 框
+      // 不管当前值是什么（可能是自动生成的 slug），直接清空并填入随机 slug
+      const urlInput = inputs[0] || null;
 
-      // 标题框：排除 URL 框和字体大小框
-      const titleInput = inputs.find(i => {
-        const label = (i.getAttribute('aria-label') || '').toLowerCase();
-        return i !== urlInput && !label.includes('字体大小') && !label.includes('font size');
-      });
-
-      if (titleInput) fillInput(titleInput, params.title);
-      if (urlInput) fillInput(urlInput, params.slug);
+      if (urlInput) {
+        // 先清空当前值
+        urlInput.focus();
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(urlInput, '');
+        urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+        // 再填入新 slug
+        fillInput(urlInput, params.slug);
+      }
 
       return {
-        titleFilled: !!titleInput,
-        titleValue: titleInput?.value,
+        titleFilled: false,
+        titleValue: undefined,
         urlFilled: !!urlInput,
         urlValue: urlInput?.value,
         totalInputs: inputs.length,
@@ -1008,7 +1145,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.siteName, options.embedBlocks, options.templateStructure);
 
       // 应用 Google Sites 主题（发布完成后切换主题）
       if (options.siteTheme && options.siteTheme !== 'Simple') {
