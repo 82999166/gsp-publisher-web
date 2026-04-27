@@ -29,19 +29,12 @@ const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
 const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
 
 class OAuthService {
-  private initialized = false;
-
-  constructor(private client: ReturnType<typeof axios.create>) {}
-
-  private ensureInitialized() {
-    if (!this.initialized) {
-      console.log("[OAuth] Initializing with baseURL:", ENV.oAuthServerUrl);
-      if (!ENV.oAuthServerUrl) {
-        console.error(
-          "[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable."
-        );
-      }
-      this.initialized = true;
+  constructor(private client: ReturnType<typeof axios.create>) {
+    console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
+    if (!ENV.oAuthServerUrl) {
+      console.error(
+        "[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable."
+      );
     }
   }
 
@@ -54,7 +47,6 @@ class OAuthService {
     code: string,
     state: string
   ): Promise<ExchangeTokenResponse> {
-    this.ensureInitialized();
     const payload: ExchangeTokenRequest = {
       clientId: ENV.appId,
       grantType: "authorization_code",
@@ -71,13 +63,12 @@ class OAuthService {
   }
 
   async getUserInfoByToken(
-    tokenResponse: ExchangeTokenResponse
+    token: ExchangeTokenResponse
   ): Promise<GetUserInfoResponse> {
-    this.ensureInitialized();
     const { data } = await this.client.post<GetUserInfoResponse>(
       GET_USER_INFO_PATH,
       {
-        accessToken: tokenResponse.accessToken,
+        accessToken: token.accessToken,
       }
     );
 
@@ -85,39 +76,19 @@ class OAuthService {
   }
 }
 
-const createOAuthHttpClient = (): AxiosInstance => {
-  // 在创建客户端时动态读取环境变量
-  const baseURL = process.env.OAUTH_SERVER_URL || ENV.oAuthServerUrl || "https://api.manus.im";
-  console.log("[SDK] Creating OAuth HTTP client with baseURL:", baseURL);
-  return axios.create({
-    baseURL,
+const createOAuthHttpClient = (): AxiosInstance =>
+  axios.create({
+    baseURL: ENV.oAuthServerUrl,
     timeout: AXIOS_TIMEOUT_MS,
   });
-};
 
 class SDKServer {
-  private client: AxiosInstance | null = null;
-  private oauthService: OAuthService | null = null;
+  private readonly client: AxiosInstance;
+  private readonly oauthService: OAuthService;
 
-  private getClient(): AxiosInstance {
-    if (!this.client) {
-      this.client = createOAuthHttpClient();
-    }
-    return this.client;
-  }
-
-  private getOAuthService(): OAuthService {
-    if (!this.oauthService) {
-      this.oauthService = new OAuthService(this.getClient());
-    }
-    return this.oauthService;
-  }
-
-  constructor(client?: AxiosInstance) {
-    if (client) {
-      this.client = client;
-      this.oauthService = new OAuthService(client);
-    }
+  constructor(client: AxiosInstance = createOAuthHttpClient()) {
+    this.client = client;
+    this.oauthService = new OAuthService(this.client);
   }
 
   private deriveLoginMethod(
@@ -151,7 +122,7 @@ class SDKServer {
     code: string,
     state: string
   ): Promise<ExchangeTokenResponse> {
-    return this.getOAuthService().getTokenByCode(code, state);
+    return this.oauthService.getTokenByCode(code, state);
   }
 
   /**
@@ -160,7 +131,7 @@ class SDKServer {
    * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
    */
   async getUserInfo(accessToken: string): Promise<GetUserInfoResponse> {
-    const data = await this.getOAuthService().getUserInfoByToken({
+    const data = await this.oauthService.getUserInfoByToken({
       accessToken,
     } as ExchangeTokenResponse);
     const loginMethod = this.deriveLoginMethod(
@@ -269,7 +240,7 @@ class SDKServer {
       projectId: ENV.appId,
     };
 
-    const { data } = await this.getClient().post<GetUserInfoWithJwtResponse>(
+    const { data } = await this.client.post<GetUserInfoWithJwtResponse>(
       GET_USER_INFO_WITH_JWT_PATH,
       payload
     );
@@ -286,9 +257,47 @@ class SDKServer {
   }
 
   async authenticateRequest(req: Request): Promise<User> {
-    // 使用本地认证（用户名/密码 + JWT）
-    const { authenticateRequest: localAuth } = await import("./localAuth");
-    return localAuth(req);
+    // Regular authentication flow
+    const cookies = this.parseCookies(req.headers.cookie);
+    const sessionCookie = cookies.get(COOKIE_NAME);
+    const session = await this.verifySession(sessionCookie);
+
+    if (!session) {
+      throw ForbiddenError("Invalid session cookie");
+    }
+
+    const sessionUserId = session.openId;
+    const signedInAt = new Date();
+    let user = await db.getUserByOpenId(sessionUserId);
+
+    // If user not in DB, sync from OAuth server automatically
+    if (!user) {
+      try {
+        const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
+        await db.upsertUser({
+          openId: userInfo.openId,
+          name: userInfo.name || null,
+          email: userInfo.email ?? null,
+          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+          lastSignedIn: signedInAt,
+        });
+        user = await db.getUserByOpenId(userInfo.openId);
+      } catch (error) {
+        console.error("[Auth] Failed to sync user from OAuth:", error);
+        throw ForbiddenError("Failed to sync user info");
+      }
+    }
+
+    if (!user) {
+      throw ForbiddenError("User not found");
+    }
+
+    await db.upsertUser({
+      openId: user.openId,
+      lastSignedIn: signedInAt,
+    });
+
+    return user;
   }
 }
 

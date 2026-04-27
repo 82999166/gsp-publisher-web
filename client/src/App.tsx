@@ -2,60 +2,34 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
-import AppLayout from "./components/AppLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import AIContent from "./pages/AIContent";
-import Accounts from "./pages/Accounts";
-import Dashboard from "./pages/Dashboard";
-import Hyperlinks from "./pages/Hyperlinks";
-import Indexing from "./pages/Indexing";
-import Login from "./pages/Login";
-import Materials from "./pages/Materials";
-import PublishTasks from "./pages/PublishTasks";
-import Settings from "./pages/Settings";
-import SeoTemplates from "./pages/SeoTemplates";
-import GoogleSites from "./pages/GoogleSites";
-import BatchGeneration from "./pages/BatchGeneration";
-import PublishedPages from "./pages/PublishedPages";
-import SystemLogs from "./pages/SystemLogs";
+import Home from "./pages/Home";
 
 function Router() {
+  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      {/* Login page - outside AppLayout, no auth check */}
-      <Route path="/login" component={Login} />
-
-      {/* All other pages - inside AppLayout (handles auth redirect) */}
-      <Route>
-        <AppLayout>
-          <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/accounts" component={Accounts} />
-            <Route path="/ai-content" component={AIContent} />
-            <Route path="/materials" component={Materials} />
-            <Route path="/publish-tasks" component={PublishTasks} />
-            <Route path="/hyperlinks" component={Hyperlinks} />
-            <Route path="/indexing" component={Indexing} />
-            <Route path="/settings" component={Settings} />
-            <Route path="/seo-templates" component={SeoTemplates} />
-            <Route path="/sites" component={GoogleSites} />
-            <Route path="/batch-generation" component={BatchGeneration} />
-            <Route path="/published-pages" component={PublishedPages} />
-            <Route path="/logs" component={SystemLogs} />
-            <Route path="/404" component={NotFound} />
-            <Route component={NotFound} />
-          </Switch>
-        </AppLayout>
-      </Route>
+      <Route path={"/"} component={Home} />
+      <Route path={"/404"} component={NotFound} />
+      {/* Final fallback route */}
+      <Route component={NotFound} />
     </Switch>
   );
 }
 
+// NOTE: About Theme
+// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
+//   to keep consistent foreground/background color across components
+// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
+
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="light">
+      <ThemeProvider
+        defaultTheme="light"
+        // switchable
+      >
         <TooltipProvider>
           <Toaster />
           <Router />

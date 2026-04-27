@@ -66,10 +66,6 @@ export type InvokeParams = {
   output_schema?: OutputSchema;
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
-  // Optional overrides: use these to pass API key/url/model from DB settings
-  apiKey?: string;
-  apiUrl?: string;
-  model?: string;
 };
 
 export type ToolCall = {
@@ -213,27 +209,16 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = (apiUrl?: string) => {
-  // Priority: param > ENV > default
-  const base = apiUrl || ENV.forgeApiUrl;
-  if (base && base.trim().length > 0) {
-    const cleaned = base.replace(/\/+$/, "");
-    // If URL already ends with /chat/completions, use as-is
-    if (cleaned.endsWith("/chat/completions")) return cleaned;
-    // If URL ends with /v1, append /chat/completions
-    if (cleaned.endsWith("/v1")) return `${cleaned}/chat/completions`;
-    // Otherwise append /v1/chat/completions
-    return `${cleaned}/v1/chat/completions`;
+const resolveApiUrl = () =>
+  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
+    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
+    : "https://forge.manus.im/v1/chat/completions";
+
+const assertApiKey = () => {
+  if (!ENV.forgeApiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
   }
-  return "https://api.groq.com/openai/v1/chat/completions";
 };
-const resolveApiKey = (apiKey?: string) => {
-  const key = apiKey || ENV.forgeApiKey;
-  if (!key) {
-    throw new Error("AI API Key 未配置，请在系统设置 → AI 配置中填写 API Key");
-  }
-  return key;
-};;
 
 const normalizeResponseFormat = ({
   responseFormat,
@@ -281,10 +266,7 @@ const normalizeResponseFormat = ({
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  const apiKey = resolveApiKey(params.apiKey);
-  const apiUrl = resolveApiUrl(params.apiUrl);
-  // Model priority: param > default (groq llama3-70b)
-  const modelName = params.model || "llama-3.3-70b-versatile";
+  assertApiKey();
 
   const {
     messages,
@@ -298,7 +280,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: modelName,
+    model: "gemini-2.5-flash",
     messages: messages.map(normalizeMessage),
   };
 
@@ -314,6 +296,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
+  payload.max_tokens = 32768
+  payload.thinking = {
+    "budget_tokens": 128
+  }
+
   const normalizedResponseFormat = normalizeResponseFormat({
     responseFormat,
     response_format,
@@ -325,11 +312,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetch(apiUrl, {
+  const response = await fetch(resolveApiUrl(), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
+      authorization: `Bearer ${ENV.forgeApiKey}`,
     },
     body: JSON.stringify(payload),
   });
