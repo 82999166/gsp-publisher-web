@@ -407,8 +407,8 @@ export class GoogleSitesPublisher {
         this.addLog('⚠️ 嵌入对话框未出现，尝试继续...');
       }
 
-      // 在输入框中填入 URL
-      const urlFilled = await page.evaluate((url: string) => {
+      // 先点击输入框获取焦点
+      const inputClicked = await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]') || document;
         const inputs = Array.from(dialog.querySelectorAll('input, textarea')) as HTMLInputElement[];
         const urlInput = inputs.find(i => {
@@ -417,21 +417,29 @@ export class GoogleSitesPublisher {
         }) || inputs[0];
         if (urlInput) {
           urlInput.focus();
-          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(urlInput, url);
-          else urlInput.value = url;
-          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
-          urlInput.dispatchEvent(new Event('change', { bubbles: true }));
+          urlInput.click();
           return true;
         }
         return false;
-      }, embedUrl);
+      });
 
-      if (!urlFilled) {
+      if (!inputClicked) {
         this.addLog('⚠️ 未找到 URL 输入框，跳过内嵌网站');
         await page.keyboard.press('Escape');
         return;
       }
+
+      // 全选清空，再用键盘输入 URL（更可靠，避免 React 受控组件问题）
+      await randomDelay(300, 500);
+      await page.keyboard.down('Control');
+      await page.keyboard.press('a');
+      await page.keyboard.up('Control');
+      await randomDelay(100, 200);
+      await page.keyboard.type(embedUrl, { delay: 20 });
+      this.addLog(`已键盘输入嵌入 URL: ${embedUrl}`);
+      await randomDelay(800, 1200);
+
+      const urlFilled = true;
       this.addLog(`已填入嵌入 URL: ${embedUrl}`);
       await randomDelay(500, 800);
 
@@ -452,33 +460,45 @@ export class GoogleSitesPublisher {
       });
 
       if (nextClicked) {
-        this.addLog(`已点击: ${nextClicked}`);
-        await randomDelay(2000, 3000);
+        this.addLog(`已点击步骤1按钮: ${nextClicked}`);
+        await randomDelay(3000, 4000); // 等待预览加载
 
-        // 如果点击的是“下一步”/“预览”，还需要点击“插入”
+        // 如果点击的是"下一步"/"预览"，还需要点击"插入"
         if (nextClicked !== '插入' && nextClicked !== 'Insert') {
-          const insertClicked = await page.evaluate(() => {
-            const dialog = document.querySelector('[role="dialog"]') || document;
-            const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-            const insertBtn = btns.find(b => {
-              const text = b.textContent?.trim() || '';
-              const disabled = (b as HTMLButtonElement).disabled;
-              return !disabled && (text === '插入' || text === 'Insert');
+          // 等待预览加载完成后查找"插入"按钮（重试多次）
+          let finalInserted = false;
+          for (let retry = 0; retry < 5; retry++) {
+            const insertClicked = await page.evaluate(() => {
+              const dialog = document.querySelector('[role="dialog"]') || document;
+              const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+              const insertBtn = btns.find(b => {
+                const text = b.textContent?.trim() || '';
+                const disabled = (b as HTMLButtonElement).disabled;
+                return !disabled && (text === '插入' || text === 'Insert');
+              });
+              if (insertBtn) {
+                (insertBtn as HTMLElement).click();
+                return insertBtn.textContent?.trim() ?? 'clicked';
+              }
+              return null;
             });
-            if (insertBtn) {
-              (insertBtn as HTMLElement).click();
-              return insertBtn.textContent?.trim() ?? 'clicked';
+            if (insertClicked) {
+              this.addLog(`已点击最终插入按钮: ${insertClicked}`);
+              finalInserted = true;
+              break;
             }
-            return null;
-          });
-          if (insertClicked) {
-            this.addLog(`已点击插入确认: ${insertClicked}`);
+            this.addLog(`等待插入按钮出现（第${retry+1}次）...`);
+            await randomDelay(1500, 2000);
+          }
+          if (!finalInserted) {
+            this.addLog('⚠️ 未找到最终插入按钮，按 Enter 尝试...');
+            await page.keyboard.press('Enter');
           }
         }
-        // 等待嵌入弹窗自然关闭（最多等 12 秒）
+        // 等待嵌入弹窗自然关闭（最多等 15 秒）
         this.addLog('等待嵌入弹窗关闭...');
         let embedDialogClosed = false;
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 15; i++) {
           await randomDelay(1000, 1000);
           const dialogStillOpen = await page.evaluate(() => {
             const dialog = document.querySelector('[role="dialog"]');
@@ -498,8 +518,11 @@ export class GoogleSitesPublisher {
           this.addLog('⚠️ 嵌入弹窗未自动关闭，强制按 Escape 关闭...');
           await page.keyboard.press('Escape');
           await randomDelay(1200, 1500);
-          this.addLog(`✅ 内嵌网站插入完成（强制关闭弹窗）: ${embedUrl}`);
+          this.addLog(`⚠️ 内嵌网站可能未成功插入（弹窗被强制关闭）: ${embedUrl}`);
         }
+
+        // 插入后等待 Google Sites 处理
+        await randomDelay(1500, 2000);
       } else {
         this.addLog('⚠️ 未找到插入确认按鈕，跳过');
         await page.keyboard.press('Escape');

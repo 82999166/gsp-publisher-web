@@ -416,7 +416,27 @@ export async function getSeoTemplates() {
 export async function getSeoTemplateById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(seoTemplates).where(eq(seoTemplates.id, id)).limit(1);
+  // 排除 siteTheme 字段（该字段可能不存在于旧数据库）
+  const result = await db.select({
+    id: seoTemplates.id,
+    name: seoTemplates.name,
+    type: seoTemplates.type,
+    description: seoTemplates.description,
+    structure: seoTemplates.structure,
+    promptTemplate: seoTemplates.promptTemplate,
+    minWords: seoTemplates.minWords,
+    maxWords: seoTemplates.maxWords,
+    isPreset: seoTemplates.isPreset,
+    isActive: seoTemplates.isActive,
+    usageCount: seoTemplates.usageCount,
+    siteNameSuffix: seoTemplates.siteNameSuffix,
+    embedUrl: seoTemplates.embedUrl,
+    embedWidth: seoTemplates.embedWidth,
+    embedHeight: seoTemplates.embedHeight,
+    embedPosition: seoTemplates.embedPosition,
+    createdAt: seoTemplates.createdAt,
+    updatedAt: seoTemplates.updatedAt,
+  }).from(seoTemplates).where(eq(seoTemplates.id, id)).limit(1);
   return result[0];
 }
 
