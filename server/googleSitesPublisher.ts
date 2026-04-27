@@ -462,8 +462,31 @@ export class GoogleSitesPublisher {
             this.addLog(`已点击插入确认: ${insertClicked}`);
           }
         }
-        await randomDelay(2000, 3000);
-        this.addLog(`✅ 内嵌网站插入完成: ${embedUrl}`);
+        // 等待嵌入弹窗自然关闭（最多等 12 秒）
+        this.addLog('等待嵌入弹窗关闭...');
+        let embedDialogClosed = false;
+        for (let i = 0; i < 12; i++) {
+          await randomDelay(1000, 1000);
+          const dialogStillOpen = await page.evaluate(() => {
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return false;
+            // 嵌入弹窗有 input，发布弹窗没有 input
+            return dialog.querySelectorAll('input, textarea').length > 0;
+          });
+          if (!dialogStillOpen) {
+            embedDialogClosed = true;
+            break;
+          }
+        }
+        if (embedDialogClosed) {
+          this.addLog(`✅ 内嵌网站插入完成: ${embedUrl}`);
+        } else {
+          // 弹窗仍未关闭，强制按 Escape 关闭
+          this.addLog('⚠️ 嵌入弹窗未自动关闭，强制按 Escape 关闭...');
+          await page.keyboard.press('Escape');
+          await randomDelay(1200, 1500);
+          this.addLog(`✅ 内嵌网站插入完成（强制关闭弹窗）: ${embedUrl}`);
+        }
       } else {
         this.addLog('⚠️ 未找到插入确认按鈕，跳过');
         await page.keyboard.press('Escape');
@@ -628,27 +651,35 @@ export class GoogleSitesPublisher {
       }
     }
 
-    // ── 阶段3.5：关闭所有残留弹窗 ──────────────────────────────────────────────
-    // 内嵌网站插入后，Google Sites 可能留有残留弹窗（如嵌入设置框）
-    // 必须先关闭，否则后续 waitForSelector('[role="dialog"]') 会匹配到错误的弹窗
-    this.addLog('检查并关闭所有残留弹窗...');
+        // ── 阶段3.5：关闭嵌入类残留弹窗 ─────────────────────────────────────
+    // 嵌入弹窗特征：有 input/textarea；发布弹窗特征：没有 input
+    // 只关闭嵌入类弹窗，避免误关发布弹窗
+    this.addLog('检查并关闭嵌入类残留弹窗...');
     let closeAttempts = 0;
     while (closeAttempts < 5) {
-      const hasDialog = await page.evaluate(() => !!document.querySelector('[role="dialog"]'));
-      if (!hasDialog) break;
-      this.addLog(`发现残留弹窗（第 ${closeAttempts + 1} 次），按 Escape 关闭...`);
+      const hasEmbedDialog = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) return false;
+        // 嵌入弹窗有 input，发布弹窗没有 input
+        return dialog.querySelectorAll('input, textarea').length > 0;
+      });
+      if (!hasEmbedDialog) break;
+      this.addLog(`发现嵌入类弹窗（第 ${closeAttempts + 1} 次），按 Escape 关闭...`);
       await page.keyboard.press('Escape');
-      await randomDelay(800, 1200);
+      await randomDelay(1000, 1200);
       closeAttempts++;
     }
-    await randomDelay(1000, 1500);
-    const dialogStillOpen = await page.evaluate(() => !!document.querySelector('[role="dialog"]'));
-    if (dialogStillOpen) {
-      this.addLog('⚠️ 弹窗仍未关闭，尝试点击页面空白区域...');
+    await randomDelay(800, 1000);
+    const embedDialogStillOpen = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      return !!dialog && dialog.querySelectorAll('input, textarea').length > 0;
+    });
+    if (embedDialogStillOpen) {
+      this.addLog('⚠️ 嵌入弹窗仍未关闭，尝试点击页面空白区域...');
       await page.mouse.click(100, 100);
-      await randomDelay(800, 1200);
+      await randomDelay(1000, 1200);
     } else {
-      this.addLog('✅ 所有残留弹窗已关闭');
+      this.addLog('✅ 嵌入类弹窗已关闭，可安全执行发布流程');
     }
 
     // ── 阶段4：等待自动保存 ──────────────────────────────────────────────────
