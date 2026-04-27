@@ -407,36 +407,63 @@ export class GoogleSitesPublisher {
         this.addLog('⚠️ 嵌入对话框未出现，尝试继续...');
       }
 
+      // 切换到"嵌入代码"标签页（更可靠，不需要验证 URL）
+      this.addLog('切换到"嵌入代码"标签页...');
+      const tabClicked = await page.evaluate(() => {
+        const tabs = Array.from(document.querySelectorAll('[role="tab"], button, [role="button"]'));
+        const codeTab = tabs.find(t => {
+          const text = t.textContent?.trim() || '';
+          const ariaLabel = t.getAttribute('aria-label') || '';
+          return text.includes('嵌入代码') || text.includes('代码') || ariaLabel.includes('嵌入代码') || ariaLabel.includes('代码');
+        });
+        if (codeTab) {
+          (codeTab as HTMLElement).click();
+          return true;
+        }
+        return false;
+      });
+
+      if (!tabClicked) {
+        this.addLog('⚠️ 未找到"嵌入代码"标签页，尝试使用"通过网址"方式...');
+        // 回退到通过网址方式
+      } else {
+        this.addLog('✅ 已切换到"嵌入代码"标签页');
+        await randomDelay(800, 1200);
+      }
+
       // 先点击输入框获取焦点
       const inputClicked = await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]') || document;
         const inputs = Array.from(dialog.querySelectorAll('input, textarea')) as HTMLInputElement[];
-        const urlInput = inputs.find(i => {
+        const codeInput = inputs.find(i => {
           const label = (i.getAttribute('aria-label') || i.placeholder || '').toLowerCase();
-          return label.includes('url') || label.includes('link') || label.includes('链接') || label.includes('网址') || i.type === 'url' || i.type === 'text';
-        }) || inputs[0];
-        if (urlInput) {
-          urlInput.focus();
-          urlInput.click();
+          return label.includes('html') || label.includes('代码') || label.includes('code') || i.tagName === 'TEXTAREA';
+        }) || inputs[inputs.length - 1]; // 如果没找到，用最后一个输入框
+        if (codeInput) {
+          codeInput.focus();
+          codeInput.click();
           return true;
         }
         return false;
       });
 
       if (!inputClicked) {
-        this.addLog('⚠️ 未找到 URL 输入框，跳过内嵌网站');
+        this.addLog('⚠️ 未找到代码输入框，跳过内嵌网站');
         await page.keyboard.press('Escape');
         return;
       }
 
-      // 全选清空，再用键盘输入 URL（更可靠，避免 React 受控组件问题）
+      // 生成 iframe 代码
+      const iframeCode = `<iframe src="${embedUrl}" width="100%" height="${embedHeight}" frameborder="0" allow="autoplay; encrypted-media"></iframe>`;
+      
+      // 全选清空，再用键盘输入代码（更可靠，避免 React 受控组件问题）
       await randomDelay(300, 500);
       await page.keyboard.down('Control');
       await page.keyboard.press('a');
       await page.keyboard.up('Control');
       await randomDelay(100, 200);
-      await page.keyboard.type(embedUrl, { delay: 20 });
-      this.addLog(`已键盘输入嵌入 URL: ${embedUrl}`);
+      await page.keyboard.type(iframeCode, { delay: 5 });
+      this.addLog(`已输入嵌入代码: ${iframeCode}`);
       await randomDelay(800, 1200);
 
       const urlFilled = true;

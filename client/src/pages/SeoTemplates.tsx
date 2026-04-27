@@ -642,11 +642,20 @@ export default function SeoTemplates() {
   }
   function handleSave() {
     const finalPrompt = editorForm.promptTemplate.trim() || buildAutoPrompt();
-    const structure = { blocks };
+    // 确保 embed 板块包含 embedUrl
+    const enrichedBlocks = blocks.map(b => {
+      if (b.type === 'embed' && !b.embedUrl && editorForm.embedUrl) {
+        return { ...b, embedUrl: editorForm.embedUrl };
+      }
+      return b;
+    });
+    const structure = { blocks: enrichedBlocks };
     const payload = {
       name: editorForm.name, description: editorForm.description || undefined,
       promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure,
       siteNameSuffix: editorForm.siteNameSuffix || undefined,
+      // 注意：embedUrl、embedWidth、embedHeight 是模板级别的默认值
+      // 如果板块中没有单独配置，会使用这些默认值
       embedUrl: editorForm.embedUrl || undefined,
       embedWidth: editorForm.embedWidth || undefined,
       embedHeight: editorForm.embedHeight || undefined,
