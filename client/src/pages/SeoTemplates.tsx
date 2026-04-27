@@ -542,8 +542,8 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 export default function SeoTemplates() {
   const { data: templates = [], refetch } = trpc.seoTemplates.list.useQuery();
-  const createMut = trpc.seoTemplates.create.useMutation({ onSuccess: () => { toast.success("模板已创建"); refetch(); setShowEditor(false); } });
-  const updateMut = trpc.seoTemplates.update.useMutation({ onSuccess: () => { toast.success("模板已更新"); refetch(); setShowEditor(false); } });
+  const createMut = trpc.seoTemplates.create.useMutation({ onSuccess: () => { toast.success("模板已创建"); refetch(); setShowEditor(false); }, onError: (e: any) => toast.error("保存失败：" + e.message) });
+  const updateMut = trpc.seoTemplates.update.useMutation({ onSuccess: () => { toast.success("模板已更新"); refetch(); setShowEditor(false); }, onError: (e: any) => toast.error("保存失败：" + e.message) });
   const deleteMut = trpc.seoTemplates.delete.useMutation({ onSuccess: () => { toast.success("模板已删除"); refetch(); } });
   const generateMut = trpc.seoTemplates.generateWithTemplate.useMutation({
     onSuccess: () => { toast.success("文章已生成，保存到素材库"); setShowGenerate(false); },
