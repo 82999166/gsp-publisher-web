@@ -687,11 +687,12 @@ export class GoogleSitesPublisher {
         const block = tplStructure[bi];
         if (block.type === 'embed') {
           this.addLog(`插入嵌入板块: ${block.embedUrl}`);
+          this.addLog(`⏸️ embed 板块暂时禁用: ${block.embedUrl}`);
           await randomDelay(300, 500);
           const heightNum = typeof block.embedHeight === 'string'
             ? parseInt(block.embedHeight as string) || 300
             : (block.embedHeight as number ?? 300);
-          await this.insertEmbedBlock(page, block.embedUrl!, heightNum);
+          // await this.insertEmbedBlock(page, block.embedUrl!, heightNum);
           await randomDelay(1000, 1500);
           // 嵌入后重新激活文本区域
           try {
