@@ -96,6 +96,13 @@ export interface PublishOptions {
   timeout?: number;
   /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置） */
   embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>;
+  /** 模板样式设置（来自 SEO 模板的样式配置） */
+  templateStyles?: {
+    h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    h2?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    h3?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    p?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+  };
 }
 
 export interface CookieEntry {
@@ -325,15 +332,36 @@ export class GoogleSitesPublisher {
    * 在 Google Sites 编辑器中写入内容并发布
    * 返回已发布的公开 URL
    */
+  /** 检测 URL 类型 */
+  private detectEmbedType(url: string): 'youtube' | 'maps' | 'form' | 'generic' {
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname.toLowerCase();
+      const pathname = urlObj.pathname.toLowerCase();
+      
+      if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) return 'youtube';
+      if (hostname.includes('maps.google.com') || hostname.includes('google.com/maps')) return 'maps';
+      if (hostname.includes('forms.google.com') || pathname.includes('/forms/')) return 'form';
+      return 'generic';
+    } catch {
+      return 'generic';
+    }
+  }
+
   /** 通过 Google Sites 工具栏插入内嵌网站板块 */
   private async insertEmbedBlock(page: Page, embedUrl: string, embedHeight: number): Promise<void> {
     this.addLog(`插入内嵌网站: ${embedUrl} (高度: ${embedHeight}px)`);
+    
+    // 检测 URL 类型
+    const embedType = this.detectEmbedType(embedUrl);
+    this.addLog(`检测到嵌入类型: ${embedType}`);
+    
     try {
       // 点击内容区末尾，确保光标在内容区
       await page.keyboard.press('End');
       await randomDelay(300, 500);
 
-      // 查找并点击工具栏中的“插入”按鈕
+      // 查找并点击工具栏中的"插入"按鈕
       const insertBtnClicked = await page.evaluate(() => {
         const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
         const insertBtn = btns.find(b => {
@@ -355,43 +383,66 @@ export class GoogleSitesPublisher {
       this.addLog(`已点击插入按鈕: ${insertBtnClicked}`);
       await randomDelay(800, 1200);
 
-      // 在下拉菜单中查找“嵌入”选项
-      const embedMenuClicked = await page.evaluate(() => {
+      // 根据 URL 类型选择菜单项
+      let menuItemText = '嵌入'; // 默认选择"嵌入"
+      if (embedType === 'youtube') menuItemText = '视频';
+      else if (embedType === 'maps') menuItemText = '地图';
+      else if (embedType === 'form') menuItemText = '表单';
+
+      // 在下拉菜单中查找对应的菜单项
+      const embedMenuClicked = await page.evaluate((itemText: string) => {
         const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, [role="button"]'));
         const embedItem = items.find(item => {
           const text = item.textContent?.trim() || '';
-          return text === '嵌入' || text === 'Embed' || (text.includes('嵌入') && text.length < 10) || (text.includes('Embed') && text.length < 10);
+          return text === itemText || text === itemText.toUpperCase() || (text.includes(itemText) && text.length < 20);
         });
         if (embedItem) {
           (embedItem as HTMLElement).click();
           return embedItem.textContent?.trim() ?? 'clicked';
         }
         return null;
-      });
+      }, menuItemText);
 
       if (!embedMenuClicked) {
-        this.addLog('⚠️ 未找到嵌入菜单项，截图调试...');
-        try {
-          await page.screenshot({ path: '/tmp/gsp_insert_menu.png', fullPage: false });
-          const menuItems = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('[role="menuitem"], li'))
-              .map(el => el.textContent?.trim().slice(0, 30))
-              .filter(Boolean);
+        this.addLog(`⚠️ 未找到${menuItemText}菜单项，尝试使用通用嵌入...`);
+        // 回退到"嵌入"选项
+        const fallbackMenuClicked = await page.evaluate(() => {
+          const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, [role="button"]'));
+          const embedItem = items.find(item => {
+            const text = item.textContent?.trim() || '';
+            return text === '嵌入' || text === 'Embed';
           });
-          this.addLog(`菜单项: ${JSON.stringify(menuItems)}`);
-        } catch {}
-        await page.keyboard.press('Escape');
-        return;
+          if (embedItem) {
+            (embedItem as HTMLElement).click();
+            return embedItem.textContent?.trim() ?? 'clicked';
+          }
+          return null;
+        });
+        
+        if (!fallbackMenuClicked) {
+          this.addLog('⚠️ 未找到嵌入菜单项，截图调试...');
+          try {
+            await page.screenshot({ path: '/tmp/gsp_insert_menu.png', fullPage: false });
+            const menuItems = await page.evaluate(() => {
+              return Array.from(document.querySelectorAll('[role="menuitem"], li'))
+                .map(el => el.textContent?.trim().slice(0, 30))
+                .filter(Boolean);
+            });
+            this.addLog(`菜单项: ${JSON.stringify(menuItems)}`);
+          } catch {}
+          await page.keyboard.press('Escape');
+          return;
+        }
       }
-      this.addLog(`已点击嵌入菜单项: ${embedMenuClicked}`);
+      this.addLog(`已点击菜单项: ${embedMenuClicked}`);
       await randomDelay(1000, 1500);
 
-      // 等待嵌入对话框出现
+      // 等待对话框出现
       try {
         await page.waitForSelector('[role="dialog"] input, [role="dialog"] textarea', { timeout: 8000 });
-        this.addLog('嵌入对话框已出现');
+        this.addLog('对话框已出现');
       } catch {
-        this.addLog('⚠️ 嵌入对话框未出现，尝试继续...');
+        this.addLog('⚠️ 对话框未出现，尝试继续...');
       }
 
       // 在输入框中填入 URL
@@ -419,10 +470,10 @@ export class GoogleSitesPublisher {
         await page.keyboard.press('Escape');
         return;
       }
-      this.addLog(`已填入嵌入 URL: ${embedUrl}`);
+      this.addLog(`已填入 URL: ${embedUrl}`);
       await randomDelay(500, 800);
 
-      // 点击“下一步”或“预览”按鈕
+      // 点击"下一步"或"预览"或"插入"按鈕
       const nextClicked = await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]') || document;
         const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
@@ -442,7 +493,7 @@ export class GoogleSitesPublisher {
         this.addLog(`已点击: ${nextClicked}`);
         await randomDelay(2000, 3000);
 
-        // 如果点击的是“下一步”/“预览”，还需要点击“插入”
+        // 如果点击的是"下一步"/"预览"，还需要点击"插入"
         if (nextClicked !== '插入' && nextClicked !== 'Insert') {
           const insertClicked = await page.evaluate(() => {
             const dialog = document.querySelector('[role="dialog"]') || document;
@@ -462,33 +513,32 @@ export class GoogleSitesPublisher {
             this.addLog(`已点击插入确认: ${insertClicked}`);
           }
         }
-        // 等待嵌入弹窗自然关闭（最多等 12 秒）
-        this.addLog('等待嵌入弹窗关闭...');
-        let embedDialogClosed = false;
+        // 等待对话框自然关闭（最多等 12 秒）
+        this.addLog('等待对话框关闭...');
+        let dialogClosed = false;
         for (let i = 0; i < 12; i++) {
           await randomDelay(1000, 1000);
           const dialogStillOpen = await page.evaluate(() => {
             const dialog = document.querySelector('[role="dialog"]');
             if (!dialog) return false;
-            // 嵌入弹窗有 input，发布弹窗没有 input
             return dialog.querySelectorAll('input, textarea').length > 0;
           });
           if (!dialogStillOpen) {
-            embedDialogClosed = true;
+            dialogClosed = true;
             break;
           }
         }
-        if (embedDialogClosed) {
+        if (dialogClosed) {
           this.addLog(`✅ 内嵌网站插入完成: ${embedUrl}`);
         } else {
-          // 弹窗仍未关闭，强制按 Escape 关闭
-          this.addLog('⚠️ 嵌入弹窗未自动关闭，强制按 Escape 关闭...');
+          // 对话框仍未关闭，强制按 Escape 关闭
+          this.addLog('⚠️ 对话框未自动关闭，强制按 Escape 关闭...');
           await page.keyboard.press('Escape');
           await randomDelay(1200, 1500);
-          this.addLog(`✅ 内嵌网站插入完成（强制关闭弹窗）: ${embedUrl}`);
+          this.addLog(`✅ 内嵌网站插入完成（强制关闭）: ${embedUrl}`);
         }
       } else {
-        this.addLog('⚠️ 未找到插入确认按鈕，跳过');
+        this.addLog('⚠️ 未找到确认按鈕，跳过');
         await page.keyboard.press('Escape');
       }
     } catch (err) {
@@ -497,7 +547,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles']): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -680,6 +730,17 @@ export class GoogleSitesPublisher {
       await randomDelay(1000, 1200);
     } else {
       this.addLog('✅ 嵌入类弹窗已关闭，可安全执行发布流程');
+    }
+
+    // ── 阶段3.6：应用样式设置（如果有）─────────────────────────────────────
+    if (templateStyles) {
+      this.addLog('开始应用样式设置...');
+      // TODO: 实现样式应用逻辑
+      // 这里需要：
+      // 1. 找到对应的文本块（H1、H2、段落等）
+      // 2. 选中文本
+      // 3. 通过 Google Sites 的样式菜单应用样式
+      this.addLog('样式应用功能待实现');
     }
 
     // ── 阶段4：等待自动保存 ──────────────────────────────────────────────────
@@ -1006,7 +1067,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles);
 
       this.addLog("发布任务完成！");
       return {

@@ -329,3 +329,28 @@ export const systemLogs = mysqlTable("system_logs", {
 
 export type SystemLog = typeof systemLogs.$inferSelect;
 export type InsertSystemLog = typeof systemLogs.$inferInsert;
+
+
+// ─── 发布队列表 ────────────────────────────────────────────────────────────────
+export const publishQueue = mysqlTable("publish_queue", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId").notNull(),
+  templateId: int("templateId"),
+  keyword: varchar("keyword", { length: 256 }).notNull(),
+  title: varchar("title", { length: 512 }).notNull(),
+  content: text("content").notNull(),
+  status: mysqlEnum("status", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
+  priority: int("priority").default(0).notNull(), // 优先级，数字越大优先级越高
+  retryCount: int("retryCount").default(0).notNull(), // 重试次数
+  maxRetries: int("maxRetries").default(3).notNull(), // 最大重试次数
+  errorMessage: text("errorMessage"), // 错误信息
+  publishedUrl: varchar("publishedUrl", { length: 1024 }), // 发布成功后的 URL
+  siteUrl: varchar("siteUrl", { length: 1024 }), // 发布的 Site URL
+  startedAt: timestamp("startedAt"), // 开始处理时间
+  completedAt: timestamp("completedAt"), // 完成时间
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PublishQueue = typeof publishQueue.$inferSelect;
+export type InsertPublishQueue = typeof publishQueue.$inferInsert;

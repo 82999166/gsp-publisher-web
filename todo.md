@@ -205,3 +205,21 @@
 - [ ] routers.ts：seoTemplates create/update 支持新字段
 - [ ] 发布流程：读取模板的 siteNameSuffix 组合站点名称；读取 embedUrl 等配置注入嵌入块到 Google Sites 页面
 - [ ] SeoTemplates.tsx：编辑弹窗新增「发布设置」区域，包含站点名称后缀和内嵌网站配置（URL/宽度/高度/位置）
+
+
+## 样式自动应用功能（2026-04-28）
+
+- [ ] 修改 PublishOptions 接口，添加 templateStyles 参数
+- [ ] 修改 routers.ts 中的 runPublishTaskAsync，传递 templateStyles
+- [ ] 在 googleSitesPublisher.ts 中实现 applyStyles 函数
+- [ ] 为 H1、H2、段落等不同块类型应用对应的样式
+- [ ] 测试样式应用效果
+
+## 批量发布优化功能（2026-04-28）
+
+- [ ] 修改数据库 schema，添加 publishQueue 表
+- [ ] 实现发布队列管理逻辑
+- [ ] 添加失败重试机制（最多 3 次）
+- [ ] 优化并发控制（支持 1-10 个并发）
+- [ ] 更新前端 UI，显示发布队列和进度
+- [ ] 测试批量发布流程
