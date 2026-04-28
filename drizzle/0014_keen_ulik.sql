@@ -1,0 +1,1 @@
+ALTER TABLE `seo_templates` ADD `siteTheme` varchar(64) DEFAULT 'Simple';
