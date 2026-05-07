@@ -1155,6 +1155,33 @@ async function runPublishTaskAsync(
   let siteNameSuffix = "";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
 
+  // 从内容中提取 iframe 标签
+  function extractIframesFromContent(content: string): Array<{ embedUrl: string; embedHeight?: string }> {
+    const iframes: Array<{ embedUrl: string; embedHeight?: string }> = [];
+    const iframeRegex = /<iframe[^>]*src=["']([^"']+)["'][^>]*(?:height=["']([^"']+)["'])?[^>]*>/gi;
+    let match;
+    while ((match = iframeRegex.exec(content)) !== null) {
+      const src = match[1];
+      const height = match[2] || "600px";
+      if (src && !src.startsWith('javascript:')) {
+        iframes.push({ embedUrl: src, embedHeight: height });
+      }
+    }
+    return iframes;
+  }
+
+  // 从内容中提取 iframe，并从内容中移除它们（防止作为纯文本输入）
+  let contentWithoutIframes = material.content;
+  const extractedIframes = extractIframesFromContent(material.content);
+  if (extractedIframes.length > 0) {
+    // 移除所有 iframe 标签
+    contentWithoutIframes = material.content.replace(/<iframe[^>]*>.*?<\/iframe>/gi, '');
+    // 如果没有从模板读取到 embedBlocks，则使用从内容中提取的
+    if (embedBlocks.length === 0) {
+      embedBlocks = extractedIframes;
+    }
+  }
+
   if ((material as any).seoTemplateId) {
     try {
       const tpl = await getSeoTemplateById((material as any).seoTemplateId);
@@ -1198,7 +1225,7 @@ async function runPublishTaskAsync(
       cookieParsed: (account as any).cookieParsed as any[],
       siteName: computedSiteName,
       title: material.title,
-      content: material.content,
+      content: contentWithoutIframes,
       siteUrl,
       proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
       fingerprint: fingerprintData ?? generateFingerprint(account.id),
