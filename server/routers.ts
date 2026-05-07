@@ -446,14 +446,14 @@ const contentRouter = router({
     language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
     minWords: z.number().default(800),
     style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
-    // 指定插入内容
-    insertKeywords: z.array(z.string()).optional(),   // 必须出现的关键词
-    anchorLinks: z.array(z.object({                   // 锚文本+超链接
+    insertKeywords: z.array(z.string()).optional(),
+    anchorLinks: z.array(z.object({
       anchorText: z.string(),
       url: z.string(),
       position: z.enum(["intro", "body", "end"]).default("body"),
     })).optional(),
-    insertParagraph: z.string().optional(),           // 指定插入段落（原文内容）
+    insertParagraph: z.string().optional(),
+    templateId: z.number().optional(),  // 添加模板支持
   })).mutation(async ({ input }) => {
     const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
     const langName = langMap[input.language];
@@ -479,22 +479,30 @@ const contentRouter = router({
 
     const titleHint = input.title ? `文章标题已指定为：「${input.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
+    // 如果指定了模板，使用模板的 promptTemplate
+    let systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，类型${styleName}，字数不少于${input.minWords}字，包含 H1/H2/H3 结构，SEO 关键词密度 0.5%-2%，返回 JSON 格式。${insertHints}`;
+    if (input.templateId) {
+      const tpl = await getSeoTemplateById(input.templateId);
+      if (tpl) {
+        const structureDesc = Array.isArray(tpl.structure)
+          ? (tpl.structure as any[]).map((b: any) => `${b.type}${b.label ? `(${b.label})` : ""}`).join(" -> ")
+          : JSON.stringify(tpl.structure);
+        systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，字数不少于${tpl.minWords ?? input.minWords}字，SEO 关键词密度 0.5%-2%，返回 JSON 格式。
+模板类型：${tpl.type}。文章结构应按照：${structureDesc}。
+${tpl.promptTemplate ? `模板要求：${tpl.promptTemplate}` : ""}
+${insertHints}`;
+      }
+    }
+
     const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
         {
           role: "system",
-          content: `你是一位专业的SEO内容创作专家，擅长为Google Sites创作高质量、防封的文章内容。要求：
-1. 语言：${langName}
-2. 文章类型：${styleName}
-3. 字数：不少于${input.minWords}字
-4. 结构：包含标题（H1）、多个小节（H2/H3）、段落正文
-5. SEO要求：关键词密度0.5%-2%，自然融入，避免堆砂
-6. 防封策略：内容原创、表述自然、避免广告语气
-7. 返回JSON格式${insertHints}`,
+          content: systemPrompt,
         },
         {
           role: "user",
-          content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回JSON格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
+          content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回 JSON 格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
         },
       ],
       response_format: { type: "json_object" },
@@ -508,6 +516,15 @@ const contentRouter = router({
     const threshold = thresholdRow ? parseInt(thresholdRow.value ?? "0") : 0;
     const autoStatus = threshold > 0 && parsed.qualityScore >= threshold ? "approved" : "pending";
 
+    // 计算元数据
+    const plainText = parsed.content.replace(/#{1,6}\s/g, "").replace(/\*\*/g, "").replace(/\n+/g, " ").trim();
+    const metaDescription = plainText.slice(0, 157) + (plainText.length > 157 ? "..." : "");
+    const urlSlug = input.keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u4e00-\u9fa5-]/g, "").slice(0, 60);
+
+    // 提取内部链接和外部链接
+    const internalLinks = anchorLinks?.filter(l => l.position !== "end") ?? [];
+    const externalLinks = anchorLinks?.filter(l => l.position === "end") ?? [];
+
     // Save to materials
     await createMaterial({
       title: input.title || parsed.title,
@@ -517,10 +534,15 @@ const contentRouter = router({
       wordCount: parsed.wordCount,
       qualityScore: parsed.qualityScore,
       status: autoStatus,
+      seoTemplateId: input.templateId ?? undefined,
+      metaDescription,
+      urlSlug,
+      internalLinks: internalLinks.length > 0 ? internalLinks : undefined,
+      externalLinks: externalLinks.length > 0 ? externalLinks : undefined,
     });
 
-    await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}` });
-    return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved" };
+    await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}\n模板：${input.templateId ? "是" : "否"}` });
+    return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved", metaDescription, urlSlug };
   }),
 
   batchGenerate: protectedProcedure.input(z.object({
@@ -1062,28 +1084,42 @@ const seoTemplatesRouter = router({
         { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
       ],
     });
-    const rawContent = response.choices?.[0]?.message?.content ?? "";
-    const content = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
-    const wordCount = content.replace(/\s+/g, "").length;
+    const rawContent = response.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent));
+    const content = parsed.content ?? "";
+    const wordCount = parsed.wordCount ?? content.replace(/\s+/g, "").length;
+    const qualityScore = parsed.qualityScore ?? Math.min(95, 60 + wordCount / 50);
+    
+    // 统一自动审核逻辑
+    const thresholdRow = await getSettingByKey("auto_approve_threshold");
+    const threshold = thresholdRow ? parseInt(thresholdRow.value ?? "0") : 0;
+    const autoStatus = threshold > 0 && qualityScore >= threshold ? "approved" : "pending";
+    
     const plainText = content.replace(/#{1,6}\s/g, "").replace(/\*\*/g, "").replace(/\n+/g, " ").trim();
     const metaDescription = plainText.slice(0, 157) + (plainText.length > 157 ? "..." : "");
     const urlSlug = input.keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u4e00-\u9fa5-]/g, "").slice(0, 60);
+    
+    // 统一处理链接
+    const internalLinksToSave = input.internalLinks?.length ? input.internalLinks : [];
+    const externalLinksToSave = input.externalLinks?.length ? input.externalLinks : [];
+    
     await createMaterial({
-      title: `${input.keyword} - SEO文章`,
+      title: parsed.title ?? `${input.keyword} - SEO文章`,
       keyword: input.keyword,
       language: input.language,
       content,
       wordCount,
-      qualityScore: Math.min(95, 60 + wordCount / 50),
-      status: "pending",
+      qualityScore,
+      status: autoStatus,
       seoTemplateId: input.templateId,
       metaDescription,
       urlSlug,
-      internalLinks: input.internalLinks ?? [],
-      externalLinks: input.externalLinks ?? [],
+      internalLinks: internalLinksToSave.length > 0 ? internalLinksToSave : undefined,
+      externalLinks: externalLinksToSave.length > 0 ? externalLinksToSave : undefined,
     });
     await updateSeoTemplate(input.templateId, { usageCount: (template.usageCount ?? 0) + 1 });
-    return { success: true, content, wordCount, metaDescription, urlSlug };
+    await createLog({ level: "success", category: "generate", title: `AI生成文章：${parsed.title ?? input.keyword}`, message: `关键词：${input.keyword}\n字数：${wordCount}\n质量分：${qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}\n模板：是` });
+    return { success: true, title: parsed.title ?? `${input.keyword} - SEO文章`, content, wordCount, qualityScore, autoApproved: autoStatus === "approved", metaDescription, urlSlug };
   }),
 });
 
