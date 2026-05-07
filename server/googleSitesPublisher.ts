@@ -140,20 +140,11 @@ function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" |
     if (!trimmed) continue;
 
     if (trimmed.startsWith("### ")) {
-      const text = trimmed.slice(4).trim();
-      sections.push({ type: "p", text: "" });
-      sections.push({ type: "p", text: "─ " + text + " ─" });
-      sections.push({ type: "p", text: "" });
+      sections.push({ type: "h3", text: trimmed.slice(4).trim() });
     } else if (trimmed.startsWith("## ")) {
-      const text = trimmed.slice(3).trim();
-      sections.push({ type: "p", text: "" });
-      sections.push({ type: "p", text: "═ " + text + " ═" });
-      sections.push({ type: "p", text: "" });
+      sections.push({ type: "h2", text: trimmed.slice(3).trim() });
     } else if (trimmed.startsWith("# ")) {
-      const text = trimmed.slice(2).trim();
-      sections.push({ type: "p", text: "" });
-      sections.push({ type: "p", text: "█ " + text + " █" });
-      sections.push({ type: "p", text: "" });
+      sections.push({ type: "h1", text: trimmed.slice(2).trim() });
     } else {
       const plain = trimmed
         .replace(/\*\*(.*?)\*\*/g, "$1")

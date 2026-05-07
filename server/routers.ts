@@ -446,14 +446,14 @@ const contentRouter = router({
     language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
     minWords: z.number().default(800),
     style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
-    insertKeywords: z.array(z.string()).optional(),
-    anchorLinks: z.array(z.object({
+    // 指定插入内容
+    insertKeywords: z.array(z.string()).optional(),   // 必须出现的关键词
+    anchorLinks: z.array(z.object({                   // 锚文本+超链接
       anchorText: z.string(),
       url: z.string(),
       position: z.enum(["intro", "body", "end"]).default("body"),
     })).optional(),
-    insertParagraph: z.string().optional(),
-    templateId: z.number().optional(),  // 添加模板支持
+    insertParagraph: z.string().optional(),           // 指定插入段落（原文内容）
   })).mutation(async ({ input }) => {
     const langMap = { "zh-CN": "简体中文", "en": "英文", "zh-TW": "繁体中文" };
     const langName = langMap[input.language];
@@ -479,30 +479,22 @@ const contentRouter = router({
 
     const titleHint = input.title ? `文章标题已指定为：「${input.title}」，请严格使用此标题。` : "请自动生成吸引人的标题。";
 
-    // 如果指定了模板，使用模板的 promptTemplate
-    let systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，类型${styleName}，字数不少于${input.minWords}字，包含 H1/H2/H3 结构，SEO 关键词密度 0.5%-2%，返回 JSON 格式。${insertHints}`;
-    if (input.templateId) {
-      const tpl = await getSeoTemplateById(input.templateId);
-      if (tpl) {
-        const structureDesc = Array.isArray(tpl.structure)
-          ? (tpl.structure as any[]).map((b: any) => `${b.type}${b.label ? `(${b.label})` : ""}`).join(" -> ")
-          : JSON.stringify(tpl.structure);
-        systemPrompt = `你是专业的SEO内容创作专家。要求：语言${langName}，字数不少于${tpl.minWords ?? input.minWords}字，SEO 关键词密度 0.5%-2%，返回 JSON 格式。
-模板类型：${tpl.type}。文章结构应按照：${structureDesc}。
-${tpl.promptTemplate ? `模板要求：${tpl.promptTemplate}` : ""}
-${insertHints}`;
-      }
-    }
-
     const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
         {
           role: "system",
-          content: systemPrompt,
+          content: `你是一位专业的SEO内容创作专家，擅长为Google Sites创作高质量、防封的文章内容。要求：
+1. 语言：${langName}
+2. 文章类型：${styleName}
+3. 字数：不少于${input.minWords}字
+4. 结构：包含标题（H1）、多个小节（H2/H3）、段落正文
+5. SEO要求：关键词密度0.5%-2%，自然融入，避免堆砂
+6. 防封策略：内容原创、表述自然、避免广告语气
+7. 返回JSON格式${insertHints}`,
         },
         {
           role: "user",
-          content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回 JSON 格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
+          content: `${titleHint}请为关键词"${input.keyword}"创作一篇高质量SEO文章。返回JSON格式：{"title": "文章标题", "content": "文章正文（Markdown格式）", "wordCount": 字数, "qualityScore": 质量分数(0-100)}`,
         },
       ],
       response_format: { type: "json_object" },
@@ -516,15 +508,6 @@ ${insertHints}`;
     const threshold = thresholdRow ? parseInt(thresholdRow.value ?? "0") : 0;
     const autoStatus = threshold > 0 && parsed.qualityScore >= threshold ? "approved" : "pending";
 
-    // 计算元数据
-    const plainText = parsed.content.replace(/#{1,6}\s/g, "").replace(/\*\*/g, "").replace(/\n+/g, " ").trim();
-    const metaDescription = plainText.slice(0, 157) + (plainText.length > 157 ? "..." : "");
-    const urlSlug = input.keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u4e00-\u9fa5-]/g, "").slice(0, 60);
-
-    // 提取内部链接和外部链接
-    const internalLinks = anchorLinks?.filter(l => l.position !== "end") ?? [];
-    const externalLinks = anchorLinks?.filter(l => l.position === "end") ?? [];
-
     // Save to materials
     await createMaterial({
       title: input.title || parsed.title,
@@ -534,15 +517,10 @@ ${insertHints}`;
       wordCount: parsed.wordCount,
       qualityScore: parsed.qualityScore,
       status: autoStatus,
-      seoTemplateId: input.templateId ?? undefined,
-      metaDescription,
-      urlSlug,
-      internalLinks: internalLinks.length > 0 ? internalLinks : undefined,
-      externalLinks: externalLinks.length > 0 ? externalLinks : undefined,
     });
 
-    await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}\n模板：${input.templateId ? "是" : "否"}` });
-    return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved", metaDescription, urlSlug };
+    await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}` });
+    return { success: true, title: input.title || parsed.title, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, autoApproved: autoStatus === "approved" };
   }),
 
   batchGenerate: protectedProcedure.input(z.object({
@@ -1084,42 +1062,28 @@ const seoTemplatesRouter = router({
         { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
       ],
     });
-    const rawContent = response.choices?.[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent));
-    const content = parsed.content ?? "";
-    const wordCount = parsed.wordCount ?? content.replace(/\s+/g, "").length;
-    const qualityScore = parsed.qualityScore ?? Math.min(95, 60 + wordCount / 50);
-    
-    // 统一自动审核逻辑
-    const thresholdRow = await getSettingByKey("auto_approve_threshold");
-    const threshold = thresholdRow ? parseInt(thresholdRow.value ?? "0") : 0;
-    const autoStatus = threshold > 0 && qualityScore >= threshold ? "approved" : "pending";
-    
+    const rawContent = response.choices?.[0]?.message?.content ?? "";
+    const content = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+    const wordCount = content.replace(/\s+/g, "").length;
     const plainText = content.replace(/#{1,6}\s/g, "").replace(/\*\*/g, "").replace(/\n+/g, " ").trim();
     const metaDescription = plainText.slice(0, 157) + (plainText.length > 157 ? "..." : "");
     const urlSlug = input.keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u4e00-\u9fa5-]/g, "").slice(0, 60);
-    
-    // 统一处理链接
-    const internalLinksToSave = input.internalLinks?.length ? input.internalLinks : [];
-    const externalLinksToSave = input.externalLinks?.length ? input.externalLinks : [];
-    
     await createMaterial({
-      title: parsed.title ?? `${input.keyword} - SEO文章`,
+      title: `${input.keyword} - SEO文章`,
       keyword: input.keyword,
       language: input.language,
       content,
       wordCount,
-      qualityScore,
-      status: autoStatus,
+      qualityScore: Math.min(95, 60 + wordCount / 50),
+      status: "pending",
       seoTemplateId: input.templateId,
       metaDescription,
       urlSlug,
-      internalLinks: internalLinksToSave.length > 0 ? internalLinksToSave : undefined,
-      externalLinks: externalLinksToSave.length > 0 ? externalLinksToSave : undefined,
+      internalLinks: input.internalLinks ?? [],
+      externalLinks: input.externalLinks ?? [],
     });
     await updateSeoTemplate(input.templateId, { usageCount: (template.usageCount ?? 0) + 1 });
-    await createLog({ level: "success", category: "generate", title: `AI生成文章：${parsed.title ?? input.keyword}`, message: `关键词：${input.keyword}\n字数：${wordCount}\n质量分：${qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}\n模板：是` });
-    return { success: true, title: parsed.title ?? `${input.keyword} - SEO文章`, content, wordCount, qualityScore, autoApproved: autoStatus === "approved", metaDescription, urlSlug };
+    return { success: true, content, wordCount, metaDescription, urlSlug };
   }),
 });
 
@@ -1191,33 +1155,6 @@ async function runPublishTaskAsync(
   let siteNameSuffix = "";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
 
-  // 从内容中提取 iframe 标签
-  function extractIframesFromContent(content: string): Array<{ embedUrl: string; embedHeight?: string }> {
-    const iframes: Array<{ embedUrl: string; embedHeight?: string }> = [];
-    const iframeRegex = /<iframe[^>]*src=["']([^"']+)["'][^>]*(?:height=["']([^"']+)["'])?[^>]*>/gi;
-    let match;
-    while ((match = iframeRegex.exec(content)) !== null) {
-      const src = match[1];
-      const height = match[2] || "600px";
-      if (src && !src.startsWith('javascript:')) {
-        iframes.push({ embedUrl: src, embedHeight: height });
-      }
-    }
-    return iframes;
-  }
-
-  // 从内容中提取 iframe，并从内容中移除它们（防止作为纯文本输入）
-  let contentWithoutIframes = material.content;
-  const extractedIframes = extractIframesFromContent(material.content);
-  if (extractedIframes.length > 0) {
-    // 移除所有 iframe 标签
-    contentWithoutIframes = material.content.replace(/<iframe[^>]*>.*?<\/iframe>/gi, '');
-    // 如果没有从模板读取到 embedBlocks，则使用从内容中提取的
-    if (embedBlocks.length === 0) {
-      embedBlocks = extractedIframes;
-    }
-  }
-
   if ((material as any).seoTemplateId) {
     try {
       const tpl = await getSeoTemplateById((material as any).seoTemplateId);
@@ -1261,7 +1198,7 @@ async function runPublishTaskAsync(
       cookieParsed: (account as any).cookieParsed as any[],
       siteName: computedSiteName,
       title: material.title,
-      content: contentWithoutIframes,
+      content: material.content,
       siteUrl,
       proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
       fingerprint: fingerprintData ?? generateFingerprint(account.id),
@@ -1693,28 +1630,31 @@ const batchGenerationRouter = router({
 
   create: protectedProcedure.input(z.object({
     name: z.string().min(1),
-    keywords: z.array(z.string()),
-    language: z.enum(["zh-CN", "en", "zh-TW"]),
-    minWords: z.number().min(100).max(5000),
-    style: z.enum(["informational", "commercial", "navigational"]),
-    templateId: z.number().optional(),
-    concurrency: z.number().min(1).max(10),
+    items: z.array(z.object({
+      keyword: z.string().min(1),
+      title: z.string().optional(),
+    })),
+    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    minWords: z.number().default(800),
+    style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
+    concurrency: z.number().min(1).max(10).default(3),
     insertKeywords: z.array(z.string()).optional(),
     anchorLinks: z.array(z.object({
       anchorText: z.string(),
       url: z.string(),
-      position: z.enum(["intro", "body", "end"]),
+      position: z.enum(["intro", "body", "end"]).default("body"),
     })).optional(),
     insertParagraph: z.string().optional(),
-    autoApproveThreshold: z.number().min(0).max(100),
-    autoQueue: z.boolean(),
+    autoApproveThreshold: z.number().min(0).max(100).default(0),
+    autoQueue: z.boolean().default(false),
+    templateId: z.number().optional(),
   })).mutation(async ({ input }) => {
-    const { keywords, autoQueue, templateId, ...batchData } = input;
+    const { items, autoQueue, templateId, ...batchData } = input;
     await createGenerationBatch({
       ...batchData,
       autoQueue: autoQueue ? 1 : 0,
       templateId: templateId ?? null,
-      totalCount: keywords.length,
+      totalCount: items.length,
       status: "pending",
     });
     // Get the newly created batch
@@ -1722,14 +1662,14 @@ const batchGenerationRouter = router({
     const batch = batches[0];
     if (!batch) throw new Error("创建失败");
     // Insert items in bulk
-    await createGenerationItems(keywords.map(keyword => ({
+    await createGenerationItems(items.map(item => ({
       batchId: batch.id,
-      keyword: keyword,
-      title: undefined,
+      keyword: item.keyword,
+      title: item.title,
       status: "pending" as const,
     })));
-    await createLog({ level: "info", category: "batch", title: `创建批量任务：${batchData.name}`, message: `共 ${keywords.length} 条，语言：${batchData.language}` });
-    return { success: true, batchId: batch.id, totalCount: keywords.length };
+     await createLog({ level: "info", category: "batch", title: `创建批量任务：${batchData.name}`, message: `共 ${items.length} 条，语言：${batchData.language}` });
+    return { success: true, batchId: batch.id, totalCount: items.length };
   }),
   start: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const batch = await getGenerationBatchById(input.id);
