@@ -1693,31 +1693,28 @@ const batchGenerationRouter = router({
 
   create: protectedProcedure.input(z.object({
     name: z.string().min(1),
-    items: z.array(z.object({
-      keyword: z.string().min(1),
-      title: z.string().optional(),
-    })),
-    language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
-    minWords: z.number().default(800),
-    style: z.enum(["informational", "commercial", "navigational"]).default("informational"),
-    concurrency: z.number().min(1).max(10).default(3),
+    keywords: z.array(z.string()),
+    language: z.enum(["zh-CN", "en", "zh-TW"]),
+    minWords: z.number().min(100).max(5000),
+    style: z.enum(["informational", "commercial", "navigational"]),
+    templateId: z.number().optional(),
+    concurrency: z.number().min(1).max(10),
     insertKeywords: z.array(z.string()).optional(),
     anchorLinks: z.array(z.object({
       anchorText: z.string(),
       url: z.string(),
-      position: z.enum(["intro", "body", "end"]).default("body"),
+      position: z.enum(["intro", "body", "end"]),
     })).optional(),
     insertParagraph: z.string().optional(),
-    autoApproveThreshold: z.number().min(0).max(100).default(0),
-    autoQueue: z.boolean().default(false),
-    templateId: z.number().optional(),
+    autoApproveThreshold: z.number().min(0).max(100),
+    autoQueue: z.boolean(),
   })).mutation(async ({ input }) => {
-    const { items, autoQueue, templateId, ...batchData } = input;
+    const { keywords, autoQueue, templateId, ...batchData } = input;
     await createGenerationBatch({
       ...batchData,
       autoQueue: autoQueue ? 1 : 0,
       templateId: templateId ?? null,
-      totalCount: items.length,
+      totalCount: keywords.length,
       status: "pending",
     });
     // Get the newly created batch
@@ -1725,14 +1722,14 @@ const batchGenerationRouter = router({
     const batch = batches[0];
     if (!batch) throw new Error("创建失败");
     // Insert items in bulk
-    await createGenerationItems(items.map(item => ({
+    await createGenerationItems(keywords.map(keyword => ({
       batchId: batch.id,
-      keyword: item.keyword,
-      title: item.title,
+      keyword: keyword,
+      title: undefined,
       status: "pending" as const,
     })));
-     await createLog({ level: "info", category: "batch", title: `创建批量任务：${batchData.name}`, message: `共 ${items.length} 条，语言：${batchData.language}` });
-    return { success: true, batchId: batch.id, totalCount: items.length };
+    await createLog({ level: "info", category: "batch", title: `创建批量任务：${batchData.name}`, message: `共 ${keywords.length} 条，语言：${batchData.language}` });
+    return { success: true, batchId: batch.id, totalCount: keywords.length };
   }),
   start: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const batch = await getGenerationBatchById(input.id);

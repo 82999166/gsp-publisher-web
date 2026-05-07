@@ -54,6 +54,7 @@ interface BatchConfig {
   language: "zh-CN" | "en" | "zh-TW";
   minWords: number;
   style: "informational" | "commercial" | "navigational";
+  templateId?: number;  // SEO 模板 ID
   concurrency: number;
   insertKeywords: string[];
   anchorLinks: AnchorLink[];
@@ -190,6 +191,7 @@ export default function BatchGeneration() {
     language: "zh-CN",
     minWords: 800,
     style: "informational",
+    templateId: undefined,
     concurrency: 3,
     insertKeywords: [],
     anchorLinks: [],
@@ -197,6 +199,9 @@ export default function BatchGeneration() {
     autoApproveThreshold: 70,
     autoQueue: false,
   });
+  
+  // 获取 SEO 模板列表
+  const { data: seoTemplates } = trpc.seoTemplate.list.useQuery();
 
   const [newKeyword, setNewKeyword] = useState("");
   const [newAnchor, setNewAnchor] = useState<AnchorLink>({ anchorText: "", url: "", position: "body" });
@@ -443,6 +448,21 @@ export default function BatchGeneration() {
                       </Select>
                     </div>
                     <div className="space-y-1.5">
+                      <Label>SEO 文章模板</Label>
+                      <Select value={String(config.templateId ?? "")} onValueChange={v => setConfigField("templateId", v ? parseInt(v) : undefined)}>
+                        <SelectTrigger><SelectValue placeholder="选择 SEO 模板（可选）" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">不使用模板</SelectItem>
+                          {seoTemplates && seoTemplates.map(tpl => (
+                            <SelectItem key={tpl.id} value={String(tpl.id)}>
+                              {tpl.name} ({tpl.type})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">选择模板后，将使用模板的提示词生成文章</p>
+                    </div>
+                    <div className="space-y-1.5">
                       <Label>文章类型</Label>
                       <Select value={config.style} onValueChange={v => setConfigField("style", v as any)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -452,6 +472,7 @@ export default function BatchGeneration() {
                           <SelectItem value="navigational">导航型（指南/教程）</SelectItem>
                         </SelectContent>
                       </Select>
+                      <p className="text-xs text-muted-foreground">未选择模板时使用此类型</p>
                     </div>
                     <div className="space-y-1.5">
                       <Label>最少字数</Label>
