@@ -635,43 +635,11 @@ export class GoogleSitesPublisher {
           await page.keyboard.press('Enter');
           await randomDelay(100, 200);
 
-          // 写入正文（保留标题格式）
+          // 写入正文
           for (const section of sections) {
             if (section.type === 'h1') continue; // 标题已写入
-            
-            // 根据标题级别应用样式
-            if (section.type === 'h2' || section.type === 'h3') {
-              // 对于 H2/H3，先输入文本，然后应用标题格式
-              await page.keyboard.type(section.text, { delay: 8 });
-              await page.keyboard.press('Enter');
-              
-              // 选择刚输入的文本行
-              await page.keyboard.down('Shift');
-              await page.keyboard.down('Home');
-              await page.keyboard.up('Shift');
-              await page.keyboard.up('Home');
-              
-              // 应用标题格式（通过快捷键或菜单）
-              // Google Sites 使用 Ctrl+Alt+1/2/3 来设置标题级别
-              if (section.type === 'h2') {
-                await page.keyboard.down('Control');
-                await page.keyboard.down('Alt');
-                await page.keyboard.press('2');
-                await page.keyboard.up('Alt');
-                await page.keyboard.up('Control');
-              } else if (section.type === 'h3') {
-                await page.keyboard.down('Control');
-                await page.keyboard.down('Alt');
-                await page.keyboard.press('3');
-                await page.keyboard.up('Alt');
-                await page.keyboard.up('Control');
-              }
-              await randomDelay(100, 200);
-            } else {
-              // 普通段落
-              await page.keyboard.type(section.text, { delay: 8 });
-              await page.keyboard.press('Enter');
-            }
+            await page.keyboard.type(section.text, { delay: 8 });
+            await page.keyboard.press('Enter');
             await randomDelay(10, 30);
           }
 
@@ -705,37 +673,8 @@ export class GoogleSitesPublisher {
           await page.keyboard.press('Enter');
           for (const section of sections) {
             if (section.type === 'h1') continue;
-            
-            // 根据标题级别应用样式
-            if (section.type === 'h2' || section.type === 'h3') {
-              await page.keyboard.type(section.text, { delay: 8 });
-              await page.keyboard.press('Enter');
-              
-              // 选择刚输入的文本行
-              await page.keyboard.down('Shift');
-              await page.keyboard.down('Home');
-              await page.keyboard.up('Shift');
-              await page.keyboard.up('Home');
-              
-              // 应用标题格式
-              if (section.type === 'h2') {
-                await page.keyboard.down('Control');
-                await page.keyboard.down('Alt');
-                await page.keyboard.press('2');
-                await page.keyboard.up('Alt');
-                await page.keyboard.up('Control');
-              } else if (section.type === 'h3') {
-                await page.keyboard.down('Control');
-                await page.keyboard.down('Alt');
-                await page.keyboard.press('3');
-                await page.keyboard.up('Alt');
-                await page.keyboard.up('Control');
-              }
-              await randomDelay(100, 200);
-            } else {
-              await page.keyboard.type(section.text, { delay: 8 });
-              await page.keyboard.press('Enter');
-            }
+            await page.keyboard.type(section.text, { delay: 8 });
+            await page.keyboard.press('Enter');
             await randomDelay(10, 30);
           }
           contentWritten = true;
@@ -875,7 +814,7 @@ export class GoogleSitesPublisher {
     const slug = generateRandomSlug();
     this.addLog(`生成随机 slug: ${slug}`);
 
-    const fillResult = await page.evaluate((params: { slug: string; title: string; siteName: string }) => {
+    const fillResult = await page.evaluate((params: { slug: string; title: string }) => {
       const dialog = document.querySelector('[role="dialog"]');
       const container = dialog || document;
 
@@ -905,8 +844,7 @@ export class GoogleSitesPublisher {
         return i !== urlInput && !label.includes('字体大小') && !label.includes('font size');
       });
 
-      // 使用 siteName 作为网站标题，而不是页面标题
-      if (titleInput) fillInput(titleInput, params.siteName);
+      if (titleInput) fillInput(titleInput, params.title);
       if (urlInput) fillInput(urlInput, params.slug);
 
       return {
@@ -916,7 +854,7 @@ export class GoogleSitesPublisher {
         urlValue: urlInput?.value,
         totalInputs: inputs.length,
       };
-    }, { slug, title, siteName: options.siteName });
+    }, { slug, title });
 
     this.addLog(`输入框填写结果: ${JSON.stringify(fillResult)}`);
 
