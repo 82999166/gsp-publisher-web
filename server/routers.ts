@@ -8,8 +8,7 @@ import {
   getAccounts, getAccountById, createAccount, updateAccount, deleteAccount, batchDeleteAccounts,
   getMaterials, getMaterialById, createMaterial, updateMaterial, deleteMaterial,
   getPublishTasks, createPublishTask, updatePublishTask, deletePublishTask, batchDeletePublishTasks,
-  getHyperlinks, createHyperlink, updateHyperlink, deleteHyperlink, seedPresetHyperlinks, batchDeleteHyperlinks,
-  getIndexingRecords, createIndexingRecord, updateIndexingRecord, deleteIndexingRecord, batchDeleteIndexingRecords,
+  createIndexingRecord,
   getSettings, getSettingByKey, upsertSetting, seedDefaultSettings,
   getKeywords, createKeyword, updateKeyword, deleteKeyword, batchDeleteKeywords,
   getDashboardStats,
@@ -734,138 +733,6 @@ const tasksRouter = router({
 });
 
 // ─── Hyperlinks ───────────────────────────────────────────────────────────────
-const hyperlinksRouter = router({
-  list: protectedProcedure.input(z.object({
-    type: z.string().optional(),
-  }).optional()).query(async ({ input }) => {
-    await seedPresetHyperlinks();
-    return getHyperlinks(input?.type);
-  }),
-
-  create: protectedProcedure.input(z.object({
-    type: z.enum(["internal", "external"]),
-    url: z.string().url(),
-    anchorText: z.string().optional(),
-    anchorType: z.enum(["exact", "partial", "lsi", "brand", "natural", "naked"]).optional(),
-    domain: z.string().optional(),
-    displayName: z.string().optional(),
-    category: z.string().optional(),
-    authorityScore: z.number().optional(),
-    language: z.string().optional(),
-    description: z.string().optional(),
-  })).mutation(async ({ input }) => {
-    await createHyperlink({ ...input, isPreset: false, isActive: true });
-    return { success: true };
-  }),
-
-  update: protectedProcedure.input(z.object({
-    id: z.number(),
-    anchorText: z.string().optional(),
-    anchorType: z.enum(["exact", "partial", "lsi", "brand", "natural", "naked"]).optional(),
-    displayName: z.string().optional(),
-    authorityScore: z.number().optional(),
-    isActive: z.boolean().optional(),
-    description: z.string().optional(),
-  })).mutation(async ({ input }) => {
-    const { id, ...data } = input;
-    await updateHyperlink(id, data);
-    return { success: true };
-  }),
-
-  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    await deleteHyperlink(input.id);
-    return { success: true };
-  }),
-  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
-    await batchDeleteHyperlinks(input.ids);
-    return { success: true };
-  }),
-});
-
-// ─── Indexing Monitor ─────────────────────────────────────────────────────────
-const indexingRouter = router({
-  list: protectedProcedure.input(z.object({
-    status: z.string().optional(),
-  }).optional()).query(async ({ input }) => {
-    const records = await getIndexingRecords();
-    if (input?.status) return records.filter(r => r.indexStatus === input.status);
-    return records;
-  }),
-
-  add: protectedProcedure.input(z.object({
-    url: z.string().url(),
-    keyword: z.string().optional(),
-    title: z.string().optional(),
-  })).mutation(async ({ input }) => {
-    await createIndexingRecord({ publishedUrl: input.url, keyword: input.keyword, title: input.title, indexStatus: "pending" });
-    return { success: true };
-  }),
-
-  check: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    // Mock check - real implementation would use Google Search Console API
-    const records = await getIndexingRecords();
-    const record = records.find(r => r.id === input.id);
-    if (!record) throw new Error("记录不存在");
-    // Simulate: randomly mark as indexed or not_indexed
-    const isIndexed = Math.random() > 0.4;
-    const newStatus = isIndexed ? "indexed" : "not_indexed";
-    const updateData: any = { indexStatus: newStatus, lastCheckedAt: new Date() };
-    if (isIndexed) updateData.indexedAt = new Date();
-    await updateIndexingRecord(input.id, updateData);
-    await createLog({ level: isIndexed ? "success" : "info", category: "indexing", title: `收录检测：${record.publishedUrl?.slice(0, 60)}`, message: `结果：${isIndexed ? "已收录" : "未收录"}`, entityType: "indexing", entityId: input.id });
-    return { success: true, indexStatus: newStatus };
-  }),
-
-  batchCheck: protectedProcedure.input(z.object({}).optional()).mutation(async () => {
-    const records = await getIndexingRecords();
-    const pending = records.filter(r => r.indexStatus === "pending" || r.indexStatus === "unknown");
-    for (const r of pending) {
-      const isIndexed = Math.random() > 0.4;
-      const newStatus = isIndexed ? "indexed" : "not_indexed";
-      const updateData: any = { indexStatus: newStatus, lastCheckedAt: new Date() };
-      if (isIndexed) updateData.indexedAt = new Date();
-      await updateIndexingRecord(r.id, updateData);
-    }
-    const indexed = pending.filter((_, i) => {
-      const isIdx = Math.random() > 0.4;
-      return isIdx;
-    }).length;
-    await createLog({ level: "info", category: "indexing", title: `批量收录检测完成`, message: `检测 ${pending.length} 条，已收录 ${indexed} 条` });
-    return { success: true, count: pending.length };
-  }),
-
-  create: protectedProcedure.input(z.object({
-    publishedUrl: z.string().url(),
-    title: z.string().optional(),
-    keyword: z.string().optional(),
-    accountId: z.number().optional(),
-  })).mutation(async ({ input }) => {
-    await createIndexingRecord({ ...input, indexStatus: "pending" });
-    return { success: true };
-  }),
-
-  updateStatus: protectedProcedure.input(z.object({
-    id: z.number(),
-    indexStatus: z.enum(["unknown", "indexed", "not_indexed", "pending"]),
-    notes: z.string().optional(),
-  })).mutation(async ({ input }) => {
-    const updateData: any = { indexStatus: input.indexStatus, lastCheckedAt: new Date() };
-    if (input.indexStatus === "indexed") updateData.indexedAt = new Date();
-    if (input.notes) updateData.notes = input.notes;
-    await updateIndexingRecord(input.id, updateData);
-    return { success: true };
-  }),
-
-  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    await deleteIndexingRecord(input.id);
-    return { success: true };
-  }),
-  batchDelete: protectedProcedure.input(z.object({ ids: z.array(z.number()) })).mutation(async ({ input }) => {
-    await batchDeleteIndexingRecords(input.ids);
-    return { success: true };
-  }),
-});
-
 // ─── System Settings ──────────────────────────────────────────────────────────
 const settingsRouter = router({
   list: protectedProcedure.query(async () => {
@@ -1921,8 +1788,6 @@ export const appRouter = router({
   content: contentRouter,
   materials: materialsRouter,
   tasks: tasksRouter,
-  hyperlinks: hyperlinksRouter,
-  indexing: indexingRouter,
   settings: settingsRouter,
   seoTemplates: seoTemplatesRouter,
   sites: sitesRouter,

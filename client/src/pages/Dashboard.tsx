@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   Clock,
   Globe,
-  Search,
+  Layers,
   TrendingUp,
   Users,
   Zap,
@@ -110,14 +110,6 @@ export default function Dashboard() {
       path: "/materials",
     },
     {
-      icon: Search,
-      label: "已收录",
-      value: stats?.indexedCount ?? 0,
-      sub: `收录率 ${stats?.indexRate ?? 0}%`,
-      color: "bg-amber-50 text-amber-600",
-      path: "/indexing",
-    },
-    {
       icon: Globe,
       label: "累计发布",
       value: stats?.totalPublished ?? 0,
@@ -132,6 +124,14 @@ export default function Dashboard() {
       sub: "等待执行的发布任务",
       color: "bg-orange-50 text-orange-600",
       path: "/publish-tasks",
+    },
+    {
+      icon: Layers,
+      label: "批量任务",
+      value: stats?.totalPublished ?? 0,
+      sub: "累计发布成功总数",
+      color: "bg-amber-50 text-amber-600",
+      path: "/published-pages",
     },
   ];
 
@@ -193,7 +193,7 @@ export default function Dashboard() {
               { label: "添加账号", path: "/accounts", icon: Users, color: "bg-blue-50 hover:bg-blue-100 text-blue-700" },
               { label: "生成内容", path: "/ai-content", icon: BarChart3, color: "bg-purple-50 hover:bg-purple-100 text-purple-700" },
               { label: "新建任务", path: "/publish-tasks", icon: Zap, color: "bg-emerald-50 hover:bg-emerald-100 text-emerald-700" },
-              { label: "收录检查", path: "/indexing", icon: Search, color: "bg-amber-50 hover:bg-amber-100 text-amber-700" },
+              { label: "批量生成", path: "/batch-generation", icon: Layers, color: "bg-amber-50 hover:bg-amber-100 text-amber-700" },
             ].map((item) => (
               <button
                 key={item.label}
@@ -218,7 +218,7 @@ export default function Dashboard() {
               { label: "数据库连接", status: "正常", ok: true },
               { label: "AI 内容生成", status: "就绪", ok: true },
               { label: "发布引擎", status: "待配置", ok: false },
-              { label: "收录监控", status: "就绪", ok: true },
+              { label: "Google Sites 发布", status: "就绪", ok: true },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
                 <span className="text-sm text-foreground">{item.label}</span>

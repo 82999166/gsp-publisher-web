@@ -8,8 +8,6 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import AIContent from "./pages/AIContent";
 import Accounts from "./pages/Accounts";
 import Dashboard from "./pages/Dashboard";
-import Hyperlinks from "./pages/Hyperlinks";
-import Indexing from "./pages/Indexing";
 import Login from "./pages/Login";
 import Materials from "./pages/Materials";
 import PublishTasks from "./pages/PublishTasks";
@@ -35,8 +33,6 @@ function Router() {
             <Route path="/ai-content" component={AIContent} />
             <Route path="/materials" component={Materials} />
             <Route path="/publish-tasks" component={PublishTasks} />
-            <Route path="/hyperlinks" component={Hyperlinks} />
-            <Route path="/indexing" component={Indexing} />
             <Route path="/settings" component={Settings} />
             <Route path="/seo-templates" component={SeoTemplates} />
             <Route path="/sites" component={GoogleSites} />

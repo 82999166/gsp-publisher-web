@@ -223,3 +223,23 @@
 - [ ] 优化并发控制（支持 1-10 个并发）
 - [ ] 更新前端 UI，显示发布队列和进度
 - [ ] 测试批量发布流程
+
+## 项目重构优化（2026-08-06）
+
+### 阶段二：清理多余功能模块
+- [ ] 删除 Hyperlinks.tsx 页面及路由
+- [ ] 删除 Indexing.tsx 页面及路由
+- [ ] 删除 ComponentShowcase.tsx 页面及路由
+- [ ] 从 App.tsx 移除对应路由
+- [ ] 从 AppSidebar.tsx 移除对应菜单项
+- [ ] 从 server/routers.ts 移除 hyperlinks、indexing 路由
+
+### 阶段三：重构核心功能 UI/UX
+- [ ] 优化 Dashboard.tsx（仪表盘数据展示）
+- [ ] 优化 AIContent.tsx（关键词管理+AI生成）
+- [ ] 优化 SeoTemplates.tsx（模板编辑完整功能）
+- [ ] 优化 BatchGeneration.tsx（简化操作流程）
+- [ ] 优化 Materials.tsx（素材库审核流程）
+- [ ] 优化 PublishTasks.tsx（发布队列管理）
+- [ ] 优化 Settings.tsx（系统设置分类整理）
+- [ ] 优化 AppSidebar.tsx（菜单分组重新设计）
