@@ -377,7 +377,7 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
                         <Label className="text-xs">列数</Label>
                         <Select value={String(block.linkColumns ?? 2)} onValueChange={v => onChange({ ...block, linkColumns: Number(v) })}>
                           <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[99999]">
                             {[1, 2, 3, 4].map(n => <SelectItem key={n} value={String(n)}>{n} 列</SelectItem>)}
                           </SelectContent>
                         </Select>
@@ -390,7 +390,7 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
                         <Label className="text-xs">链接样式</Label>
                         <Select value={block.linkStyle ?? "card"} onValueChange={v => onChange({ ...block, linkStyle: v as any })}>
                           <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[99999]">
                             <SelectItem value="card">卡片式</SelectItem>
                             <SelectItem value="list">列表式</SelectItem>
                             <SelectItem value="button">按钮式</SelectItem>
@@ -426,7 +426,7 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
                         <Label className="text-xs">嵌入位置</Label>
                         <Select value={block.embedPosition ?? "inline"} onValueChange={v => onChange({ ...block, embedPosition: v as any })}>
                           <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[99999]">
                             <SelectItem value="top">文章顶部</SelectItem>
                             <SelectItem value="inline">正文中</SelectItem>
                             <SelectItem value="bottom">文章底部</SelectItem>
@@ -794,7 +794,7 @@ export default function SeoTemplates() {
                       <Label className="text-xs">模板类型</Label>
                       <Select value={editorForm.type} onValueChange={v => setEditorForm(f => ({ ...f, type: v }))}>
                         <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[99999]">
                           {TEMPLATE_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
@@ -915,7 +915,7 @@ export default function SeoTemplates() {
                         <Label className="text-xs">嵌入位置</Label>
                         <Select value={editorForm.embedPosition} onValueChange={v => setEditorForm(f => ({ ...f, embedPosition: v }))}>
                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[99999]">
                             <SelectItem value="top">文章顶部</SelectItem>
                             <SelectItem value="bottom">文章底部</SelectItem>
                           </SelectContent>
@@ -985,7 +985,7 @@ export default function SeoTemplates() {
               <Label>文章语言</Label>
               <Select value={generateForm.language} onValueChange={v => setGenerateForm(f => ({ ...f, language: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[99999]">
                   <SelectItem value="zh-CN">中文（简体）</SelectItem>
                   <SelectItem value="en">English</SelectItem>
                   <SelectItem value="zh-TW">中文（繁体）</SelectItem>

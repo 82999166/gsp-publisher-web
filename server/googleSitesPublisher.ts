@@ -103,6 +103,10 @@ export interface PublishOptions {
     h3?: { fontSize?: string; fontWeight?: string; textAlign?: string };
     p?: { fontSize?: string; fontWeight?: string; textAlign?: string };
   };
+  /** 超链接列表（锚文本+URL，插入到文章中） */
+  anchorLinks?: Array<{ text: string; url: string; position?: string }>;
+  /** 社交媒体链接（插入到文章底部） */
+  socialLinks?: Array<{ label: string; url: string; type?: string }>;
 }
 
 export interface CookieEntry {
@@ -131,9 +135,9 @@ export interface PublishResult {
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 /** 将 Markdown 内容转换为适合 Google Sites 的纯文本段落列表 */
-function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" | "p"; text: string }[] {
+function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] {
   const lines = markdown.split("\n");
-  const sections: { type: "h1" | "h2" | "h3" | "p"; text: string }[] = [];
+  const sections: { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -146,6 +150,14 @@ function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" |
     } else if (trimmed.startsWith("# ")) {
       sections.push({ type: "h1", text: trimmed.slice(2).trim() });
     } else {
+      if (trimmed.includes('<iframe')) {
+        const srcMatch = trimmed.match(/src=["'](.*?)['"]/);
+        const heightMatch = trimmed.match(/height=["'](\d+)['"]/);
+        if (srcMatch && srcMatch[1]) {
+          sections.push({ type: 'embed', text: '', embedUrl: srcMatch[1], embedHeight: parseInt(heightMatch?.[1] || '300') });
+          continue;
+        }
+      }
       const plain = trimmed
         .replace(/\*\*(.*?)\*\*/g, "$1")
         .replace(/\*(.*?)\*/g, "$1")
@@ -153,7 +165,7 @@ function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" |
         .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
         .replace(/^[-*+]\s+/, "")
         .replace(/^\d+\.\s+/, "");
-      if (plain) sections.push({ type: "p", text: plain });
+      if (plain && !plain.includes('<iframe')) sections.push({ type: "p", text: plain });
     }
   }
 
@@ -547,7 +559,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles']): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks']): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -636,8 +648,13 @@ export class GoogleSitesPublisher {
           await randomDelay(100, 200);
 
           // 写入正文
+          const inlineEmbeds: Array<{ embedUrl: string; embedHeight: number }> = [];
           for (const section of sections) {
             if (section.type === 'h1') continue; // 标题已写入
+            if (section.type === 'embed') {
+              if (section.embedUrl) inlineEmbeds.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
+              continue;
+            }
             await page.keyboard.type(section.text, { delay: 8 });
             await page.keyboard.press('Enter');
             await randomDelay(10, 30);
@@ -645,6 +662,10 @@ export class GoogleSitesPublisher {
 
           contentWritten = true;
           this.addLog(`✅ 内容写入成功（通过 ${sel}），标题: ${title}，段落数: ${sections.length}`);
+          if (inlineEmbeds.length > 0 && (!embedBlocks || embedBlocks.length === 0)) {
+            embedBlocks = inlineEmbeds;
+            this.addLog(`从内容中提取到 ${inlineEmbeds.length} 个 iframe 嵌入块`);
+          }
           break;
         }
       } catch (e) {
@@ -671,14 +692,23 @@ export class GoogleSitesPublisher {
 
           await page.keyboard.type(title, { delay: 15 });
           await page.keyboard.press('Enter');
+          const inlineEmbeds2: Array<{ embedUrl: string; embedHeight: number }> = [];
           for (const section of sections) {
             if (section.type === 'h1') continue;
+            if (section.type === 'embed') {
+              if (section.embedUrl) inlineEmbeds2.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
+              continue;
+            }
             await page.keyboard.type(section.text, { delay: 8 });
             await page.keyboard.press('Enter');
             await randomDelay(10, 30);
           }
           contentWritten = true;
           this.addLog('✅ 内容写入成功（通过点击中央激活）');
+          if (inlineEmbeds2.length > 0 && (!embedBlocks || embedBlocks.length === 0)) {
+            embedBlocks = inlineEmbeds2;
+            this.addLog(`从内容中提取到 ${inlineEmbeds2.length} 个 iframe 嵌入块`);
+          }
         }
       } catch (e) {
         this.addLog(`点击中央激活失败: ${e}`);
@@ -687,6 +717,97 @@ export class GoogleSitesPublisher {
 
     if (!contentWritten) {
       this.addLog('⚠️ 内容写入失败，将继续尝试发布（站点标题将为默认值）');
+    }
+
+    // ── 阶段2.5：填写网站名称（siteName）─────────────────────────────────────
+    if (siteName) {
+      this.addLog(`尝试填写网站名称: ${siteName}`);
+      try {
+        // Google Sites 顶部有一个网站名称输入框（input#i3 或 aria-label="Site name"）
+        const siteNameFilled = await page.evaluate((name: string) => {
+          const selectors = ['input#i3', 'input[aria-label="Site name"]', 'input[aria-label="网站名称"]', 'input[placeholder*="site name" i]', 'input[placeholder*="网站名称"]'];
+          for (const sel of selectors) {
+            const el = document.querySelector(sel) as HTMLInputElement;
+            if (el) {
+              el.focus();
+              el.select();
+              el.value = '';
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.value = name;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return sel;
+            }
+          }
+          return null;
+        }, siteName);
+        if (siteNameFilled) {
+          await randomDelay(300, 500);
+          await page.keyboard.press('Enter');
+          this.addLog(`✅ 网站名称已填写（通过 ${siteNameFilled}）: ${siteName}`);
+        } else {
+          // 尝试用真实鼠标点击顶部输入框区域
+          await page.mouse.click(200, 32);
+          await randomDelay(300, 500);
+          await page.keyboard.down('Control');
+          await page.keyboard.press('a');
+          await page.keyboard.up('Control');
+          await page.keyboard.type(siteName, { delay: 10 });
+          await page.keyboard.press('Enter');
+          this.addLog(`网站名称已通过点击顶部区域填写: ${siteName}`);
+        }
+      } catch (e) {
+        this.addLog(`网站名称填写失败: ${e}`);
+      }
+      await randomDelay(500, 800);
+    }
+
+    // ── 阶段2.6：插入超链接列表（anchorLinks）────────────────────────────────
+    if (anchorLinks && anchorLinks.length > 0) {
+      this.addLog(`开始插入 ${anchorLinks.length} 个超链接...`);
+      try {
+        // 在文章末尾添加超链接列表
+        await page.mouse.click(640, 400);
+        await randomDelay(300, 500);
+        // 移到文章末尾
+        await page.keyboard.down('Control');
+        await page.keyboard.press('End');
+        await page.keyboard.up('Control');
+        await randomDelay(200, 300);
+        await page.keyboard.press('Enter');
+        await randomDelay(100, 200);
+        for (const link of anchorLinks) {
+          await page.keyboard.type(`${link.text}: ${link.url}`, { delay: 8 });
+          await page.keyboard.press('Enter');
+          await randomDelay(50, 100);
+        }
+        this.addLog(`✅ 超链接列表已插入`);
+      } catch (e) {
+        this.addLog(`超链接列表插入失败: ${e}`);
+      }
+    }
+
+    // ── 阶段2.7：插入社交媒体链接（socialLinks）──────────────────────────────
+    if (socialLinks && socialLinks.length > 0) {
+      this.addLog(`开始插入 ${socialLinks.length} 个社交媒体链接...`);
+      try {
+        await page.mouse.click(640, 400);
+        await randomDelay(300, 500);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('End');
+        await page.keyboard.up('Control');
+        await randomDelay(200, 300);
+        await page.keyboard.press('Enter');
+        await randomDelay(100, 200);
+        for (const link of socialLinks) {
+          await page.keyboard.type(`${link.label}: ${link.url}`, { delay: 8 });
+          await page.keyboard.press('Enter');
+          await randomDelay(50, 100);
+        }
+        this.addLog(`✅ 社交媒体链接已插入`);
+      } catch (e) {
+        this.addLog(`社交媒体链接插入失败: ${e}`);
+      }
     }
 
     // ── 阶段3：插入内嵌网站板块（如果有）──────────────────────────────────────
@@ -706,28 +827,53 @@ export class GoogleSitesPublisher {
     // 只关闭嵌入类弹窗，避免误关发布弹窗
     this.addLog('检查并关闭嵌入类残留弹窗...');
     let closeAttempts = 0;
-    while (closeAttempts < 5) {
-      const hasEmbedDialog = await page.evaluate(() => {
+    while (closeAttempts < 8) {
+      const dialogState = await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]');
-        if (!dialog) return false;
-        // 嵌入弹窗有 input，发布弹窗没有 input
-        return dialog.querySelectorAll('input, textarea').length > 0;
+        if (!dialog) return { hasDialog: false, cancelPos: null };
+        const hasInput = dialog.querySelectorAll('input, textarea').length > 0;
+        if (!hasInput) return { hasDialog: false, cancelPos: null };
+        // 找 Cancel 按钮坐标
+        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+        const cancelBtn = btns.find(b => {
+          const t = b.textContent?.trim() || '';
+          return t === 'Cancel' || t === '取消' || t === '关闭';
+        });
+        if (cancelBtn) {
+          const rect = (cancelBtn as HTMLElement).getBoundingClientRect();
+          return { hasDialog: true, cancelPos: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } };
+        }
+        return { hasDialog: true, cancelPos: null };
       });
-      if (!hasEmbedDialog) break;
-      this.addLog(`发现嵌入类弹窗（第 ${closeAttempts + 1} 次），按 Escape 关闭...`);
-      await page.keyboard.press('Escape');
-      await randomDelay(1000, 1200);
+      if (!dialogState.hasDialog) break;
+      this.addLog(`发现嵌入类弹窗（第 ${closeAttempts + 1} 次）...`);
+      if (dialogState.cancelPos) {
+        this.addLog('点击 Cancel 按钮关闭弹窗');
+        await page.mouse.click(dialogState.cancelPos.x, dialogState.cancelPos.y);
+      } else {
+        await page.keyboard.press('Escape');
+      }
+      await randomDelay(800, 1000);
       closeAttempts++;
     }
-    await randomDelay(800, 1000);
+    await randomDelay(500, 800);
     const embedDialogStillOpen = await page.evaluate(() => {
       const dialog = document.querySelector('[role="dialog"]');
       return !!dialog && dialog.querySelectorAll('input, textarea').length > 0;
     });
     if (embedDialogStillOpen) {
       this.addLog('⚠️ 嵌入弹窗仍未关闭，尝试点击页面空白区域...');
-      await page.mouse.click(100, 100);
-      await randomDelay(1000, 1200);
+      await page.mouse.click(640, 200);
+      await randomDelay(800, 1000);
+      // 最后尝试：JS 直接点击 Cancel
+      await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) return;
+        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+        const cancelBtn = btns.find(b => { const t = b.textContent?.trim() || ''; return t === 'Cancel' || t === '取消'; });
+        if (cancelBtn) (cancelBtn as HTMLElement).click();
+      });
+      await randomDelay(800, 1000);
     } else {
       this.addLog('✅ 嵌入类弹窗已关闭，可安全执行发布流程');
     }
@@ -1067,7 +1213,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks);
 
       this.addLog("发布任务完成！");
       return {
