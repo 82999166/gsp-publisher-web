@@ -1772,61 +1772,6 @@ const logsRouter = router({
 });
 
 // ─── App Router ───────────────────────────────────────────────────────────────────────────────
-// ─── 发布队列管理 ──────────────────────────────────────────────────────────────
-/**
- * 发布队列管理器
- * 支持：
- * - 添加任务到队列
- * - 处理队列中的任务（支持并发）
- * - 失败重试机制
- * - 优先级管理
- */
-class PublishQueueManager {
-  private isProcessing = false;
-  private concurrency = 3; // 默认并发数
-  private maxRetries = 3; // 最大重试次数
-
-  async addToQueue(accountId: number, templateId: number | undefined, keyword: string, title: string, content: string, priority = 0) {
-    // TODO: 实现添加任务到队列的逻辑
-    // 1. 创建 publishQueue 记录
-    // 2. 返回队列 ID
-  }
-
-  async processQueue(concurrency = 3) {
-    if (this.isProcessing) {
-      console.log('队列处理已在运行中，跳过');
-      return;
-    }
-
-    this.isProcessing = true;
-    this.concurrency = concurrency;
-
-    try {
-      while (true) {
-        // TODO: 实现队列处理逻辑
-        // 1. 从数据库查询待处理任务（status = 'pending'）
-        // 2. 按优先级排序
-        // 3. 并发处理任务（最多 concurrency 个）
-        // 4. 处理失败的任务（重试或标记为失败）
-        // 5. 更新任务状态
-        break;
-      }
-    } finally {
-      this.isProcessing = false;
-    }
-  }
-
-  async retryFailedTasks() {
-    // TODO: 实现重试失败任务的逻辑
-    // 1. 查询 retryCount < maxRetries 的失败任务
-    // 2. 将状态改回 'pending'
-    // 3. 增加 retryCount
-    // 4. 加入处理队列
-  }
-}
-
-export const publishQueueManager = new PublishQueueManager();
-
 export const appRouter = router({
   system: systemRouter,
   auth: router({
