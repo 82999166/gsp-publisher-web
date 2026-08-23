@@ -516,6 +516,7 @@ const contentRouter = router({
       wordCount: parsed.wordCount,
       qualityScore: parsed.qualityScore,
       status: autoStatus,
+      externalLinks: input.anchorLinks?.map(link => ({ anchorText: link.anchorText, url: link.url, position: link.position })),
     });
 
     await createLog({ level: "success", category: "generate", title: `AI生成文章：${input.title || parsed.title}`, message: `关键词：${input.keyword}\n字数：${parsed.wordCount}\n质量分：${parsed.qualityScore}\n状态：${autoStatus === "approved" ? "自动通过" : "待审核"}` });
@@ -971,6 +972,11 @@ const sitesRouter = router({
     customDomain: z.string().optional(),
     category: z.string().optional(),
     language: z.enum(["zh-CN", "en", "zh-TW"]).default("zh-CN"),
+    socialLinks: z.array(z.object({
+      label: z.string().min(1),
+      url: z.string().url(),
+      type: z.string().optional(),
+    })).optional(),
     notes: z.string().optional(),
   })).mutation(async ({ input }) => {
     await createGoogleSite({ ...input, status: "active" });
@@ -986,6 +992,11 @@ const sitesRouter = router({
     status: z.enum(["active", "inactive", "suspended"]).optional(),
     gscVerified: z.boolean().optional(),
     gscSiteUrl: z.string().optional(),
+    socialLinks: z.array(z.object({
+      label: z.string().min(1),
+      url: z.string().url(),
+      type: z.string().optional(),
+    })).optional(),
     notes: z.string().optional(),
   })).mutation(async ({ input }) => {
     const { id, ...data } = input;
@@ -1009,18 +1020,40 @@ async function runPublishTaskAsync(
   material: Awaited<ReturnType<typeof getMaterialById>>
 ) {
   if (!account || !material) return;
-  let siteUrl: string | undefined;
-  if (task.siteId) {
-    const site = await getGoogleSiteById(task.siteId);
-    siteUrl = site?.siteUrl ?? undefined;
-  } else if ((account as any).defaultSiteUrl) {
-    siteUrl = (account as any).defaultSiteUrl;
-  }
+  // 当前业务规则：每次任务都创建一个独立的 Google Sites 站点。
+  // siteId 仅作为发布配置（社交链接等）的来源，不再作为既有站点的编辑 URL。
+  const siteConfig = task.siteId ? await getGoogleSiteById(task.siteId) : undefined;
   const proxyConfig = (account as any).proxyConfig as any;
   const fingerprintData = (account as any).browserFingerprint as any;
-  // 读取网站名称后缀设置，优先使用模板的 siteNameSuffix，其次用系统设置
+  const cleanArticleTitle = material.title.replace(/\s*[-–—]\s*SEO文章\s*$/i, "").trim() || material.title;
+  const normalizeLinks = (raw: unknown): Array<{ text: string; url: string; position?: string }> => {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    return raw.flatMap<{ text: string; url: string; position?: string }>((item: any) => {
+      const text = String(item?.text ?? item?.anchorText ?? item?.label ?? "").trim();
+      const url = String(item?.url ?? "").trim();
+      const position = typeof item?.position === "string" ? item.position : "end";
+      if (!text || !/^https?:\/\//i.test(url) || seen.has(`${text}|${url}`)) return [];
+      seen.add(`${text}|${url}`);
+      return [{ text, url, position }];
+    });
+  };
+  // 读取网站名称后缀、嵌入内容、版式和模板链接。
   let siteNameSuffix = "";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
+  let templateStyles: {
+    h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    h2?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    h3?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+    p?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+  } | undefined;
+  const anchorLinks: Array<{ text: string; url: string; position?: string }> = normalizeLinks([
+    ...((material as any).internalLinks ?? []),
+    ...((material as any).externalLinks ?? []),
+  ]);
+  const socialLinks = Array.isArray((siteConfig as any)?.socialLinks)
+    ? (siteConfig as any).socialLinks.filter((item: any) => item?.label && /^https?:\/\//i.test(String(item?.url ?? "")))
+    : [];
 
   if ((material as any).seoTemplateId) {
     try {
@@ -1030,21 +1063,35 @@ async function runPublishTaskAsync(
         if ((tpl as any).siteNameSuffix) {
           siteNameSuffix = ((tpl as any).siteNameSuffix as string).trim();
         }
-        // 读取模板的内嵌网站配置
+        // 读取模板级内嵌网站配置。
         if ((tpl as any).embedUrl) {
-          embedBlocks = [{
+          embedBlocks.push({
             embedUrl: (tpl as any).embedUrl as string,
             embedWidth: ((tpl as any).embedWidth as string) || "100%",
             embedHeight: ((tpl as any).embedHeight as string) || "600px",
             embedPosition: ((tpl as any).embedPosition as string) || "bottom",
-          }];
-        } else if (tpl.structure) {
-          // 兼容旧版：从 structure 中提取 embed 板块
+          });
+        }
+        // 模板级配置和可视化板块结构可以同时存在，不能互相排斥。
+        if (tpl.structure) {
           const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
           if (Array.isArray(structure)) {
             const structureEmbeds = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
               .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as string | undefined }));
-            if (structureEmbeds.length > 0) embedBlocks = structureEmbeds;
+            embedBlocks.push(...structureEmbeds);
+            const styles: NonNullable<typeof templateStyles> = {};
+            for (const block of structure as any[]) {
+              const styleKey = block.type === "paragraph" ? "p" : block.type;
+              if (["h1", "h2", "h3", "p"].includes(styleKey) && (block.fontSize || block.fontWeight || block.textAlign)) {
+                (styles as any)[styleKey] = {
+                  fontSize: block.fontSize,
+                  fontWeight: block.fontWeight,
+                  textAlign: block.textAlign,
+                };
+              }
+              if (block.type === "links") anchorLinks.push(...normalizeLinks(block.linkItems));
+            }
+            if (Object.keys(styles).length > 0) templateStyles = styles;
           }
         }
       }
@@ -1058,20 +1105,26 @@ async function runPublishTaskAsync(
     const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
     siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
   }
-  const computedSiteName = siteNameSuffix ? `${material.title} ${siteNameSuffix}` : material.title;
+  const computedSiteName = siteNameSuffix ? `${cleanArticleTitle} ${siteNameSuffix}` : cleanArticleTitle;
+  embedBlocks = embedBlocks.filter((block, index, all) =>
+    !!block.embedUrl && all.findIndex(candidate => candidate.embedUrl === block.embedUrl && candidate.embedPosition === block.embedPosition) === index
+  );
+  const uniqueAnchorLinks = normalizeLinks(anchorLinks);
 
   try {
     const result = await googleSitesPublisher.publish({
       cookieParsed: (account as any).cookieParsed as any[],
       siteName: computedSiteName,
-      title: material.title,
+      title: cleanArticleTitle,
       content: material.content,
-      siteUrl,
       proxy: proxyConfig ? { host: proxyConfig.host, port: proxyConfig.port, username: proxyConfig.username, password: proxyConfig.password, protocol: proxyConfig.protocol } : undefined,
       fingerprint: fingerprintData ?? generateFingerprint(account.id),
       headless: true,
       timeout: 120000,
       embedBlocks: embedBlocks.length > 0 ? embedBlocks : undefined,
+      templateStyles,
+      anchorLinks: uniqueAnchorLinks.length > 0 ? uniqueAnchorLinks : undefined,
+      socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
     });
     if (result.success) {
       await updatePublishTask(taskId, {
@@ -1081,11 +1134,12 @@ async function runPublishTaskAsync(
         engineLog: result.log.join("\n"),
       });
       if (task.materialId) await updateMaterial(task.materialId, { status: "published" });
-      await createLog({ level: "success", category: "publish", title: `发布成功：${material.title}`, message: `任务 #${taskId} 发布成功\n发布链接：${result.publishedUrl}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: taskId });
+      await updateAccount(account.id, { todayPublished: (account.todayPublished ?? 0) + 1 });
+      await createLog({ level: "success", category: "publish", title: `发布成功：${cleanArticleTitle}`, message: `任务 #${taskId} 发布成功\n发布链接：${result.publishedUrl}\n\n${result.log.slice(-5).join("\n")}`, entityType: "task", entityId: taskId });
       if (result.publishedUrl) {
         await createIndexingRecord({
           publishedUrl: result.publishedUrl,
-          title: material.title,
+          title: cleanArticleTitle,
           keyword: material.keyword ?? undefined,
           accountId: task.accountId,
           siteId: task.siteId ?? undefined,
@@ -1097,10 +1151,10 @@ async function runPublishTaskAsync(
           materialId: task.materialId ?? undefined,
           accountId: task.accountId,
           siteId: task.siteId ?? undefined,
-          title: material.title,
+          title: cleanArticleTitle,
           keyword: material.keyword ?? undefined,
           publishedUrl: result.publishedUrl,
-          siteUrl: task.siteId ? (await getGoogleSiteById(task.siteId))?.siteUrl ?? undefined : undefined,
+          siteUrl: result.siteUrl ?? result.publishedUrl,
           language: material.language ?? "zh-CN",
           wordCount: material.wordCount ?? undefined,
           qualityScore: material.qualityScore ?? undefined,
@@ -1443,6 +1497,7 @@ ${insertHints}`;
         qualityScore: parsed.qualityScore,
         status: autoStatus,
         seoTemplateId: seoTemplateId ?? undefined,
+        externalLinks: anchorLinks?.map(link => ({ anchorText: link.anchorText, url: link.url, position: link.position })),
       });
 
       await updateGenerationItem(item.id, {

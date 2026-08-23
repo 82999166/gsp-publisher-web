@@ -103,6 +103,8 @@ export const googleSites = mysqlTable("google_sites", {
   indexedCount: int("indexedCount").default(0),      // 已收录页面数
   gscVerified: boolean("gscVerified").default(false), // 是否已在 GSC 验证
   gscSiteUrl: varchar("gscSiteUrl", { length: 1024 }), // GSC 中注册的 Site URL
+  // 发布后追加到文章末尾的社交媒体链接
+  socialLinks: json("socialLinks"), // [{label, url, type?}]
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -153,7 +155,7 @@ export const publishTasks = mysqlTable("publish_tasks", {
   maxRetries: int("maxRetries").default(3),
   // 发布引擎日志
   engineLog: text("engineLog"),                      // 发布引擎执行日志
-  publishMethod: mysqlEnum("publishMethod", ["browser_automation", "google_sites_api"]).default("google_sites_api").notNull(), // 发布方式
+  publishMethod: mysqlEnum("publishMethod", ["browser_automation", "google_sites_api"]).default("browser_automation").notNull(), // 当前稳定链路为浏览器自动化
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

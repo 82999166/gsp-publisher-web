@@ -1,0 +1,2 @@
+ALTER TABLE `publish_tasks` MODIFY COLUMN `publishMethod` enum('browser_automation','google_sites_api') NOT NULL DEFAULT 'browser_automation';--> statement-breakpoint
+ALTER TABLE `google_sites` ADD `socialLinks` json;

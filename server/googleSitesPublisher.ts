@@ -135,7 +135,7 @@ export interface PublishResult {
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 /** 将 Markdown 内容转换为适合 Google Sites 的纯文本段落列表 */
-function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] {
+export function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] {
   const lines = markdown.split("\n");
   const sections: { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] = [];
 
@@ -360,6 +360,92 @@ export class GoogleSitesPublisher {
     }
   }
 
+  /**
+   * Google Sites 的 jsaction 交互不会稳定响应 HTMLElement.click()。
+   * 先在 DOM 中定位可见目标，再统一改用 Puppeteer 的真实鼠标事件触发。
+   */
+  private async clickVisibleText(page: Page, texts: string[], selector = 'button, [role="button"], [role="tab"], [role="menuitem"], [role="option"]'): Promise<string | null> {
+    const target = await page.evaluate(({ texts, selector }) => {
+      const normalized = texts.map(text => text.trim().toLowerCase());
+      const elements = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+      const element = elements.find((candidate) => {
+        const label = `${candidate.textContent ?? ''} ${candidate.getAttribute('aria-label') ?? ''}`.trim().toLowerCase();
+        const rect = candidate.getBoundingClientRect();
+        const style = window.getComputedStyle(candidate);
+        return !(candidate as HTMLButtonElement).disabled && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+          && normalized.some(text => label === text || label.includes(text));
+      });
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        text: (element.textContent ?? element.getAttribute('aria-label') ?? '').trim(),
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    }, { texts, selector });
+
+    if (!target) return null;
+    await page.mouse.click(target.x, target.y);
+    return target.text || texts[0];
+  }
+
+  /** 将模板的 H1 字号映射到 Google Sites 支持的字号菜单。 */
+  private async applyBannerTitleFontSize(page: Page, title: string, templateSize?: string): Promise<void> {
+    // Google Sites 的 Banner 默认字号为 64，过大；将模板语义字号映射为其菜单中的可选值。
+    const sizeMap: Record<string, number> = { sm: 18, base: 24, lg: 30, xl: 36, "2xl": 36 };
+    const targetSize = sizeMap[templateSize ?? "xl"] ?? 36;
+
+    try {
+      const selected = await page.evaluate((headline) => {
+        const editable = Array.from(document.querySelectorAll('[contenteditable="true"], [contenteditable="plaintext-only"]'))
+          .find((element) => (element.textContent ?? '').trim().startsWith(headline));
+        if (!editable) return false;
+        const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+        const textNode = walker.nextNode();
+        if (!textNode?.textContent) return false;
+        const length = Math.min(headline.length, textNode.textContent.length);
+        const range = document.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return selection?.toString() === headline;
+      }, title);
+
+      if (!selected) {
+        this.addLog('⚠️ 未定位到 Banner 标题文本，跳过字号设置');
+        return;
+      }
+
+      await randomDelay(250, 450);
+      const control = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+        const input = inputs.find((candidate) => {
+          const label = `${candidate.getAttribute('aria-label') ?? ''} ${candidate.getAttribute('role') ?? ''}`.toLowerCase();
+          const rect = candidate.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && (label.includes('font size') || label.includes('字号') || label.includes('combobox'));
+        });
+        if (!input) return null;
+        const rect = input.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+
+      if (!control) {
+        this.addLog('⚠️ 标题字号工具栏未出现，跳过字号设置');
+        return;
+      }
+
+      await page.mouse.click(control.x, control.y);
+      await randomDelay(350, 600);
+      const selectedOption = await this.clickVisibleText(page, [String(targetSize)], '[role="option"], [role="menuitem"]');
+      if (selectedOption) this.addLog(`✅ Banner 标题字号已设置为 ${targetSize}`);
+      else this.addLog(`⚠️ 未找到 Google Sites 的 ${targetSize} 号字号选项`);
+    } catch (error) {
+      this.addLog(`Banner 标题字号设置失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /** 通过 Google Sites 工具栏插入内嵌网站板块 */
   private async insertEmbedBlock(page: Page, embedUrl: string, embedHeight: number): Promise<void> {
     this.addLog(`插入内嵌网站: ${embedUrl} (高度: ${embedHeight}px)`);
@@ -373,20 +459,8 @@ export class GoogleSitesPublisher {
       await page.keyboard.press('End');
       await randomDelay(300, 500);
 
-      // 查找并点击工具栏中的"插入"按鈕
-      const insertBtnClicked = await page.evaluate(() => {
-        const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
-        const insertBtn = btns.find(b => {
-          const text = b.textContent?.trim() || '';
-          const ariaLabel = b.getAttribute('aria-label') || '';
-          return text === '插入' || text === 'Insert' || ariaLabel === '插入' || ariaLabel === 'Insert';
-        });
-        if (insertBtn) {
-          (insertBtn as HTMLElement).click();
-          return insertBtn.textContent?.trim() ?? 'clicked';
-        }
-        return null;
-      });
+      // Google Sites 使用 jsaction；必须用真实鼠标事件点击右侧的“插入”入口。
+      const insertBtnClicked = await this.clickVisibleText(page, ['插入', 'Insert']);
 
       if (!insertBtnClicked) {
         this.addLog('⚠️ 未找到插入按鈕，跳过内嵌网站板块');
@@ -401,35 +475,13 @@ export class GoogleSitesPublisher {
       else if (embedType === 'maps') menuItemText = '地图';
       else if (embedType === 'form') menuItemText = '表单';
 
-      // 在下拉菜单中查找对应的菜单项
-      const embedMenuClicked = await page.evaluate((itemText: string) => {
-        const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, [role="button"]'));
-        const embedItem = items.find(item => {
-          const text = item.textContent?.trim() || '';
-          return text === itemText || text === itemText.toUpperCase() || (text.includes(itemText) && text.length < 20);
-        });
-        if (embedItem) {
-          (embedItem as HTMLElement).click();
-          return embedItem.textContent?.trim() ?? 'clicked';
-        }
-        return null;
-      }, menuItemText);
+      // 在下拉菜单中查找对应的菜单项，并以真实鼠标事件触发。
+      const embedMenuClicked = await this.clickVisibleText(page, [menuItemText, menuItemText === '嵌入' ? 'Embed' : menuItemText]);
 
       if (!embedMenuClicked) {
         this.addLog(`⚠️ 未找到${menuItemText}菜单项，尝试使用通用嵌入...`);
         // 回退到"嵌入"选项
-        const fallbackMenuClicked = await page.evaluate(() => {
-          const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], li, button, [role="button"]'));
-          const embedItem = items.find(item => {
-            const text = item.textContent?.trim() || '';
-            return text === '嵌入' || text === 'Embed';
-          });
-          if (embedItem) {
-            (embedItem as HTMLElement).click();
-            return embedItem.textContent?.trim() ?? 'clicked';
-          }
-          return null;
-        });
+        const fallbackMenuClicked = await this.clickVisibleText(page, ['嵌入', 'Embed']);
         
         if (!fallbackMenuClicked) {
           this.addLog('⚠️ 未找到嵌入菜单项，截图调试...');
@@ -486,20 +538,8 @@ export class GoogleSitesPublisher {
       await randomDelay(500, 800);
 
       // 点击"下一步"或"预览"或"插入"按鈕
-      const nextClicked = await page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]') || document;
-        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-        const nextBtn = btns.find(b => {
-          const text = b.textContent?.trim() || '';
-          const disabled = (b as HTMLButtonElement).disabled;
-          return !disabled && (text === '下一步' || text === 'Next' || text === '预览' || text === 'Preview' || text === '插入' || text === 'Insert');
-        });
-        if (nextBtn) {
-          (nextBtn as HTMLElement).click();
-          return nextBtn.textContent?.trim() ?? 'clicked';
-        }
-        return null;
-      });
+      let nextClicked = await this.clickVisibleText(page, ['下一步', 'Next', '预览', 'Preview'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+      if (!nextClicked) nextClicked = await this.clickVisibleText(page, ['插入', 'Insert'], '[role="dialog"] button, [role="dialog"] [role="button"]');
 
       if (nextClicked) {
         this.addLog(`已点击: ${nextClicked}`);
@@ -507,20 +547,7 @@ export class GoogleSitesPublisher {
 
         // 如果点击的是"下一步"/"预览"，还需要点击"插入"
         if (nextClicked !== '插入' && nextClicked !== 'Insert') {
-          const insertClicked = await page.evaluate(() => {
-            const dialog = document.querySelector('[role="dialog"]') || document;
-            const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-            const insertBtn = btns.find(b => {
-              const text = b.textContent?.trim() || '';
-              const disabled = (b as HTMLButtonElement).disabled;
-              return !disabled && (text === '插入' || text === 'Insert');
-            });
-            if (insertBtn) {
-              (insertBtn as HTMLElement).click();
-              return insertBtn.textContent?.trim() ?? 'clicked';
-            }
-            return null;
-          });
+          const insertClicked = await this.clickVisibleText(page, ['插入', 'Insert'], '[role="dialog"] button, [role="dialog"] [role="button"]');
           if (insertClicked) {
             this.addLog(`已点击插入确认: ${insertClicked}`);
           }
@@ -543,11 +570,11 @@ export class GoogleSitesPublisher {
         if (dialogClosed) {
           this.addLog(`✅ 内嵌网站插入完成: ${embedUrl}`);
         } else {
-          // 对话框仍未关闭，强制按 Escape 关闭
-          this.addLog('⚠️ 对话框未自动关闭，强制按 Escape 关闭...');
-          await page.keyboard.press('Escape');
-          await randomDelay(1200, 1500);
-          this.addLog(`✅ 内嵌网站插入完成（强制关闭）: ${embedUrl}`);
+          // 未关闭代表 Google Sites 尚未接受嵌入（常见原因是目标站点禁止 iframe）。
+          // 不再把这种情况记录为成功，避免发布日志与实际页面不一致。
+          this.addLog(`⚠️ 内嵌网站未被 Google Sites 接受：${embedUrl}。请确认目标网址允许 iframe 嵌入。`);
+          await this.clickVisibleText(page, ['取消', 'Cancel'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+          await randomDelay(600, 900);
         }
       } else {
         this.addLog('⚠️ 未找到确认按鈕，跳过');
@@ -662,8 +689,8 @@ export class GoogleSitesPublisher {
 
           contentWritten = true;
           this.addLog(`✅ 内容写入成功（通过 ${sel}），标题: ${title}，段落数: ${sections.length}`);
-          if (inlineEmbeds.length > 0 && (!embedBlocks || embedBlocks.length === 0)) {
-            embedBlocks = inlineEmbeds;
+          if (inlineEmbeds.length > 0) {
+            embedBlocks = [...(embedBlocks ?? []), ...inlineEmbeds];
             this.addLog(`从内容中提取到 ${inlineEmbeds.length} 个 iframe 嵌入块`);
           }
           break;
@@ -705,8 +732,8 @@ export class GoogleSitesPublisher {
           }
           contentWritten = true;
           this.addLog('✅ 内容写入成功（通过点击中央激活）');
-          if (inlineEmbeds2.length > 0 && (!embedBlocks || embedBlocks.length === 0)) {
-            embedBlocks = inlineEmbeds2;
+          if (inlineEmbeds2.length > 0) {
+            embedBlocks = [...(embedBlocks ?? []), ...inlineEmbeds2];
             this.addLog(`从内容中提取到 ${inlineEmbeds2.length} 个 iframe 嵌入块`);
           }
         }
@@ -717,6 +744,10 @@ export class GoogleSitesPublisher {
 
     if (!contentWritten) {
       this.addLog('⚠️ 内容写入失败，将继续尝试发布（站点标题将为默认值）');
+    }
+
+    if (contentWritten) {
+      await this.applyBannerTitleFontSize(page, title, templateStyles?.h1?.fontSize);
     }
 
     // ── 阶段2.5：填写网站名称（siteName）─────────────────────────────────────
@@ -895,18 +926,7 @@ export class GoogleSitesPublisher {
     await randomDelay(5000, 6000);
     // ── 阶段5：点击右上角"发布"按钮 ─────────────────────────────────────────────────
     this.addLog('查找并点击发布按钮...');
-    const publishBtnClicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-      const btn = buttons.find(b => {
-        const text = b.textContent?.trim() || '';
-        return text === '发布' || text === 'Publish' || text === 'publish';
-      });
-      if (btn) {
-        (btn as HTMLElement).click();
-        return btn.textContent?.trim() ?? 'clicked';
-      }
-      return null;
-    });
+    const publishBtnClicked = await this.clickVisibleText(page, ['发布', 'Publish']);
 
     if (!publishBtnClicked) {
       this.addLog('⚠️ 未找到发布按钮，截图调试...');
@@ -978,17 +998,18 @@ export class GoogleSitesPublisher {
         input.dispatchEvent(new Event('change', { bubbles: true }));
       }
 
-      // URL 框：ariaLabel 为"网站名称"/"Site name"/"Web address"，或初始值为空
-      const urlInput = inputs.find(i => {
+      // 新建 Google Sites 的发布弹窗通常只有一个文本框，它就是 Web address / slug。
+      // 该输入框可能已被网站名称自动预填，因此不能用“值为空”判断。
+      const urlInput = inputs.length === 1 ? inputs[0] : inputs.find(i => {
         const label = (i.getAttribute('aria-label') || '').toLowerCase();
         return label.includes('网站名称') || label.includes('site name') || label.includes('web address') || label.includes('url');
       }) || inputs.find(i => i.value === '');
 
-      // 标题框：排除 URL 框和字体大小框
-      const titleInput = inputs.find(i => {
+      // 只有存在第二个输入框时才填写标题，避免把文章标题误写到 slug 中。
+      const titleInput = inputs.length > 1 ? inputs.find(i => {
         const label = (i.getAttribute('aria-label') || '').toLowerCase();
         return i !== urlInput && !label.includes('字体大小') && !label.includes('font size');
-      });
+      }) : undefined;
 
       if (titleInput) fillInput(titleInput, params.title);
       if (urlInput) fillInput(urlInput, params.slug);
@@ -1021,47 +1042,7 @@ export class GoogleSitesPublisher {
     // ── 阶段6：点击弹窗内确认发布按钮 ───────────────────────────────────────
     this.addLog('点击弹窗内确认发布按钮...');
 
-    const confirmResult = await page.evaluate(() => {
-      // 优先在 dialog 内找未禁用的"发布"/"Publish"按钮
-      const dialog = document.querySelector('[role="dialog"]');
-      if (dialog) {
-        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-        const btn = btns.find(b => {
-          const text = b.textContent?.trim() || '';
-          const disabled = (b as HTMLButtonElement).disabled;
-          return !disabled && (text === '发布' || text === 'Publish');
-        });
-        if (btn) {
-          (btn as HTMLElement).click();
-          return `dialog内: "${btn.textContent?.trim()}"`;
-        }
-
-        // 如果发布按钮是禁用的，记录原因
-        const disabledBtn = btns.find(b => {
-          const text = b.textContent?.trim() || '';
-          return text === '发布' || text === 'Publish';
-        });
-        if (disabledBtn) {
-          return `发布按钮被禁用（可能 slug 未通过验证）`;
-        }
-      }
-
-      // 全页面备用查找（排除工具栏按钮）
-      const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
-      const btn = allBtns.find(b => {
-        const text = b.textContent?.trim() || '';
-        const disabled = (b as HTMLButtonElement).disabled;
-        const cls = b.className || '';
-        // 跳过工具栏按钮（className 含 UQuaGc 且不在 dialog 内）
-        if (cls.includes('UQuaGc') && !dialog?.contains(b)) return false;
-        return !disabled && (text === '发布' || text === 'Publish');
-      });
-      if (btn) {
-        (btn as HTMLElement).click();
-        return `全页面: "${btn.textContent?.trim()}"`;
-      }
-      return null;
-    });
+    const confirmResult = await this.clickVisibleText(page, ['发布', 'Publish'], '[role="dialog"] button, [role="dialog"] [role="button"]');
 
     if (confirmResult) {
       this.addLog(`✅ 已点击确认发布按钮: ${confirmResult}`);
@@ -1069,20 +1050,10 @@ export class GoogleSitesPublisher {
       this.addLog('⚠️ 未找到可点击的确认发布按钮，尝试等待更长时间后重试...');
       // 再等 2 秒后重试一次（slug 验证可能需要更长时间）
       await randomDelay(2000, 3000);
-      const retryResult = await page.evaluate(() => {
+      const retryClick = await this.clickVisibleText(page, ['发布', 'Publish'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+      const retryResult = retryClick ? `重试成功: "${retryClick}"` : await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]');
-        const container = dialog || document;
-        const btns = Array.from(container.querySelectorAll('button, [role="button"]'));
-        const btn = btns.find(b => {
-          const text = b.textContent?.trim() || '';
-          const disabled = (b as HTMLButtonElement).disabled;
-          return !disabled && (text === '发布' || text === 'Publish');
-        });
-        if (btn) {
-          (btn as HTMLElement).click();
-          return `重试成功: "${btn.textContent?.trim()}"`;
-        }
-        // 输出所有按钮状态用于调试
+        const btns = Array.from(dialog?.querySelectorAll('button, [role="button"]') || []);
         return `重试失败，弹窗按钮: ${JSON.stringify(btns.map(b => ({ text: b.textContent?.trim().slice(0, 20), disabled: (b as HTMLButtonElement).disabled })))}`;
       });
       this.addLog(`重试结果: ${retryResult}`);

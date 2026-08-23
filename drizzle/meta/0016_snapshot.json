@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "81d8e65f-6900-4f21-838e-fca6fe699e3c",
-  "prevId": "254cfef0-a4d6-4ab1-9002-2a44b5bd3ae0",
+  "id": "5a9a2276-6e7d-4b3a-9b7d-245fc0d34cd3",
+  "prevId": "81d8e65f-6900-4f21-838e-fca6fe699e3c",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -567,6 +567,13 @@
         "gscSiteUrl": {
           "name": "gscSiteUrl",
           "type": "varchar(1024)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "socialLinks": {
+          "name": "socialLinks",
+          "type": "json",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -1355,7 +1362,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'google_sites_api'"
+          "default": "'browser_automation'"
         },
         "createdAt": {
           "name": "createdAt",

@@ -65,8 +65,10 @@ export default function GoogleSites() {
     gscVerified: false,
     gscSiteUrl: "",
     status: "active" as any,
+    socialLinks: [] as Array<{ label: string; url: string; type?: string }>,
     notes: "",
   });
+  const [newSocialLink, setNewSocialLink] = useState({ label: "", url: "" });
 
   const getAccount = (id: number) => (accounts as any[]).find((a: any) => a.id === id);
 
@@ -168,6 +170,13 @@ export default function GoogleSites() {
                     </div>
                   )}
 
+                  {Array.isArray(site.socialLinks) && site.socialLinks.length > 0 && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Link2 className="w-3 h-3" />
+                      已配置 {site.socialLinks.length} 条文章末尾链接
+                    </div>
+                  )}
+
                   {/* GSC 状态 */}
                   <div className="flex items-center gap-1 text-xs">
                     {site.gscVerified ? (
@@ -207,8 +216,10 @@ export default function GoogleSites() {
                           gscVerified: site.gscVerified ?? false,
                           gscSiteUrl: site.gscSiteUrl ?? "",
                           status: site.status,
+                          socialLinks: Array.isArray(site.socialLinks) ? site.socialLinks : [],
                           notes: site.notes ?? "",
                         });
+                        setNewSocialLink({ label: "", url: "" });
                         setShowConfig(true);
                       }}
                     >
@@ -269,7 +280,7 @@ export default function GoogleSites() {
                 value={createForm.siteUrl}
                 onChange={e => setCreateForm(f => ({ ...f, siteUrl: e.target.value }))}
               />
-              <p className="text-xs text-muted-foreground">已有站点填入 URL，新站点留空（发布引擎会自动创建）</p>
+              <p className="text-xs text-muted-foreground">当前发布模式会为每个任务创建独立新站点；此字段仅用于保存既有站点的历史记录。</p>
             </div>
             <div className="space-y-1.5">
               <Label>自定义域名</Label>
@@ -384,6 +395,55 @@ export default function GoogleSites() {
                 />
               </div>
             </div>
+            <div className="border rounded-lg p-3 space-y-3">
+              <div>
+                <p className="text-sm font-medium">文章末尾链接</p>
+                <p className="text-xs text-muted-foreground mt-1">发布时会追加到文章末尾；每个站点配置可独立维护。</p>
+              </div>
+              <div className="grid grid-cols-[1fr_1.4fr_auto] gap-2">
+                <Input
+                  placeholder="链接名称，如：联系我们"
+                  value={newSocialLink.label}
+                  onChange={e => setNewSocialLink(v => ({ ...v, label: e.target.value }))}
+                />
+                <Input
+                  type="url"
+                  placeholder="https://example.com"
+                  value={newSocialLink.url}
+                  onChange={e => setNewSocialLink(v => ({ ...v, url: e.target.value }))}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const label = newSocialLink.label.trim();
+                    const url = newSocialLink.url.trim();
+                    if (!label || !/^https?:\/\//i.test(url)) {
+                      toast.error("请填写链接名称和有效的 http(s) 地址");
+                      return;
+                    }
+                    setConfigForm(form => ({ ...form, socialLinks: [...form.socialLinks, { label, url }] }));
+                    setNewSocialLink({ label: "", url: "" });
+                  }}
+                >添加</Button>
+              </div>
+              {configForm.socialLinks.length > 0 ? (
+                <div className="space-y-2">
+                  {configForm.socialLinks.map((link, index) => (
+                    <div key={`${link.label}-${link.url}-${index}`} className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm">
+                      <span className="font-medium shrink-0">{link.label}</span>
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">{link.url}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => setConfigForm(form => ({ ...form, socialLinks: form.socialLinks.filter((_, itemIndex) => itemIndex !== index) }))}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">尚未配置文章末尾链接。</p>
+              )}
+            </div>
             <div className="space-y-1.5">
               <Label>备注</Label>
               <Textarea
@@ -404,6 +464,7 @@ export default function GoogleSites() {
                 gscVerified: configForm.gscVerified,
                 gscSiteUrl: configForm.gscSiteUrl || undefined,
                 status: configForm.status,
+                socialLinks: configForm.socialLinks,
                 notes: configForm.notes || undefined,
               })}
             >
