@@ -538,23 +538,36 @@ export class GoogleSitesPublisher {
       return false;
     }
     try {
-      await page.keyboard.down('Control');
-      await page.keyboard.press('k');
-      await page.keyboard.up('Control');
+      // 日志已确认 Google Sites 的真实控件是 aria-label="Insert link"。
+      // 不能模糊匹配任何含 link 的按钮，否则会误点“未发布站点无法复制链接”。
+      const insertLinkButton = await page.evaluate(() => {
+        const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
+          const labels = [
+            element.getAttribute('aria-label') ?? '',
+            element.getAttribute('data-tooltip') ?? '',
+            element.getAttribute('title') ?? '',
+          ].map((value) => value.trim().toLowerCase());
+          const rect = (element as HTMLElement).getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && labels.some((label) => label === 'insert link' || label === '插入链接');
+        }) as HTMLElement | undefined;
+        if (!candidate) return null;
+        const rect = candidate.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, ariaLabel: candidate.getAttribute('aria-label') ?? '' };
+      });
+      if (insertLinkButton) {
+        this.addLog(`已定位真实链接控件: ${insertLinkButton.ariaLabel || 'Insert link'}`);
+        await page.mouse.click(insertLinkButton.x, insertLinkButton.y);
+      } else {
+        this.addLog('⚠️ 未定位到精确 Insert link 控件，尝试 Ctrl+K 作为回退');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('k');
+        await page.keyboard.up('Control');
+      }
       try {
-        await page.waitForSelector('[role="dialog"] input', { timeout: 2500 });
+        await page.waitForSelector('[role="dialog"] input', { timeout: 4000 });
       } catch {
-        const toolbarLink = await page.evaluate(() => {
-          const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
-            const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('data-tooltip') ?? ''} ${element.getAttribute('title') ?? ''}`.toLowerCase();
-            const rect = (element as HTMLElement).getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0 && /(^|\s)(insert )?link|链接/.test(label) && !/unlink|移除链接/.test(label);
-          }) as HTMLElement | undefined;
-          if (!candidate) return null;
-          const rect = candidate.getBoundingClientRect();
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        });
-        if (toolbarLink) await page.mouse.click(toolbarLink.x, toolbarLink.y);
+        await this.logEditorInteractionState(page, `${description} Insert link 未打开对话框`);
+        throw new Error('点击 Insert link 后未出现链接对话框');
       }
       await page.waitForSelector('[role="dialog"] input', { timeout: 6000 });
       const linkInput = await page.evaluate(() => {
