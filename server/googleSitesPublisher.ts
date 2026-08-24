@@ -411,6 +411,32 @@ export class GoogleSitesPublisher {
     return target.text || texts[0];
   }
 
+  /** 验证内嵌对话框自动关闭后，编辑器中是否真实生成了目标网址的嵌入元素。 */
+  private async verifyEmbedRendered(page: Page, embedUrl: string): Promise<{ rendered: boolean; evidence: string }> {
+    const hostname = (() => {
+      try { return new URL(embedUrl).hostname; } catch { return embedUrl; }
+    })();
+    return page.evaluate(({ embedUrl, hostname }) => {
+      const iframe = Array.from(document.querySelectorAll('iframe')).find((element) =>
+        element.src.includes(embedUrl) || element.src.includes(hostname),
+      );
+      if (iframe) return { rendered: true, evidence: `iframe:${iframe.src}` };
+
+      const linkedElement = Array.from(document.querySelectorAll('[href], [data-url], [data-embed-url]')).find((element) => {
+        const values = [
+          element.getAttribute('href') ?? '',
+          element.getAttribute('data-url') ?? '',
+          element.getAttribute('data-embed-url') ?? '',
+        ];
+        return values.some((value) => value.includes(embedUrl) || value.includes(hostname));
+      });
+      if (linkedElement) {
+        return { rendered: true, evidence: `${linkedElement.tagName.toLowerCase()}:${linkedElement.getAttribute('href') ?? linkedElement.getAttribute('data-url') ?? linkedElement.getAttribute('data-embed-url')}` };
+      }
+      return { rendered: false, evidence: '未检测到 iframe、href、data-url 或 data-embed-url 证据' };
+    }, { embedUrl, hostname });
+  }
+
   /** 将模板的 H1 字号映射到 Google Sites 支持的字号菜单。 */
   private async applyBannerTitleFontSize(page: Page, title: string, templateSize?: string): Promise<void> {
     // Google Sites 的 Banner 默认字号为 64，过大；将模板语义字号映射为其菜单中的可选值。
@@ -613,6 +639,20 @@ export class GoogleSitesPublisher {
         } else {
           this.addLog('⚠️ 未出现“整个页面”预览卡片，将尝试使用默认嵌入方式');
         }
+      }
+
+      // Google Sites 的部分版本会在 URL 提交后直接关闭对话框。如果发生这种情况，
+      // 只有在编辑器页面中检测到目标网址的 iframe/嵌入证据时才允许继续发布。
+      const dialogStillPresent = await page.evaluate(() => Boolean(document.querySelector('[role="dialog"]')));
+      if (!dialogStillPresent) {
+        const verification = await this.verifyEmbedRendered(page, embedUrl);
+        if (verification.rendered) {
+          this.addLog(`✅ 内嵌对话框自动关闭且已验证嵌入块: ${verification.evidence}`);
+          return true;
+        }
+        this.addLog(`⚠️ 内嵌对话框自动关闭但未检测到嵌入块: ${verification.evidence}`);
+        try { await page.screenshot({ path: '/tmp/gsp_embed_auto_close_debug.png', fullPage: false }); } catch {}
+        return false;
       }
 
       // 预览生成后，在当前弹窗内精确点击 Insert。
