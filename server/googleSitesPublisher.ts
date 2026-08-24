@@ -593,9 +593,10 @@ export class GoogleSitesPublisher {
       }
       this.addLog(`已定位内嵌 URL 输入框: ${urlFillResult.label || '未标注'}（候选 ${urlFillResult.candidateCount} 个）`);
       await page.mouse.click(urlFillResult.x, urlFillResult.y);
-      // Tab 使 Google Sites 的 jsaction 提交由原生 setter 触发的输入，进而加载预览。
-      await page.keyboard.press('Tab');
-      this.addLog(`已填入 URL 并触发预览: ${embedUrl}`);
+      // 不使用 Tab/Enter：这两个按键会在部分 Google Sites 版本中关闭嵌入弹窗。
+      // 原生 input/change 事件已在上方触发；保持焦点，让 Sites 在当前对话框内异步加载预览。
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      this.addLog(`已填入 URL，保持输入框焦点等待预览: ${embedUrl}`);
       const enteredUrl = await page.evaluate((expectedUrl) => {
         const dialog = document.querySelector('[role="dialog"]');
         const inputs = Array.from(dialog?.querySelectorAll('input, textarea') || []) as Array<HTMLInputElement | HTMLTextAreaElement>;
