@@ -459,83 +459,97 @@ export class GoogleSitesPublisher {
       await page.keyboard.press('End');
       await randomDelay(300, 500);
 
-      // Google Sites 使用 jsaction；必须用真实鼠标事件点击右侧的“插入”入口。
-      const insertBtnClicked = await this.clickVisibleText(page, ['插入', 'Insert']);
+      // Google Sites 的首次菜单点击偶尔会命中旧控件。只在真正的 URL 对话框出现后
+      // 才继续填写，避免把 URL 输入到编辑器或其他残留弹窗中。
+      let dialogOpened = false;
+      for (let attempt = 1; attempt <= 2 && !dialogOpened; attempt++) {
+        const insertBtnClicked = await this.clickVisibleText(page, ['插入', 'Insert'], 'button, [role="button"], [role="tab"]');
+        if (!insertBtnClicked) {
+          this.addLog(`⚠️ 第 ${attempt} 次未找到插入入口`);
+          continue;
+        }
+        this.addLog(`已点击插入入口（第 ${attempt} 次）: ${insertBtnClicked}`);
+        await randomDelay(700, 1000);
 
-      if (!insertBtnClicked) {
-        this.addLog('⚠️ 未找到插入按鈕，跳过内嵌网站板块');
-        return;
-      }
-      this.addLog(`已点击插入按鈕: ${insertBtnClicked}`);
-      await randomDelay(800, 1200);
-
-      // 根据 URL 类型选择菜单项
-      let menuItemText = '嵌入'; // 默认选择"嵌入"
-      if (embedType === 'youtube') menuItemText = '视频';
-      else if (embedType === 'maps') menuItemText = '地图';
-      else if (embedType === 'form') menuItemText = '表单';
-
-      // 在下拉菜单中查找对应的菜单项，并以真实鼠标事件触发。
-      const embedMenuClicked = await this.clickVisibleText(page, [menuItemText, menuItemText === '嵌入' ? 'Embed' : menuItemText]);
-
-      if (!embedMenuClicked) {
-        this.addLog(`⚠️ 未找到${menuItemText}菜单项，尝试使用通用嵌入...`);
-        // 回退到"嵌入"选项
-        const fallbackMenuClicked = await this.clickVisibleText(page, ['嵌入', 'Embed']);
-        
-        if (!fallbackMenuClicked) {
-          this.addLog('⚠️ 未找到嵌入菜单项，截图调试...');
-          try {
-            await page.screenshot({ path: '/tmp/gsp_insert_menu.png', fullPage: false });
-            const menuItems = await page.evaluate(() => {
-              return Array.from(document.querySelectorAll('[role="menuitem"], li'))
-                .map(el => el.textContent?.trim().slice(0, 30))
-                .filter(Boolean);
-            });
-            this.addLog(`菜单项: ${JSON.stringify(menuItems)}`);
-          } catch {}
+        const menuItemText = embedType === 'youtube' ? '视频' : embedType === 'maps' ? '地图' : embedType === 'form' ? '表单' : '嵌入';
+        const embedMenuClicked = await this.clickVisibleText(
+          page,
+          [menuItemText, menuItemText === '嵌入' ? 'Embed' : menuItemText],
+          '[role="menuitem"], [role="button"], [role="option"]',
+        );
+        if (!embedMenuClicked) {
+          this.addLog(`⚠️ 第 ${attempt} 次未找到 ${menuItemText} 菜单项`);
           await page.keyboard.press('Escape');
-          return;
+          continue;
+        }
+        this.addLog(`已点击菜单项: ${embedMenuClicked}`);
+        try {
+          await page.waitForSelector('[role="dialog"] input, [role="dialog"] textarea', { timeout: 8000 });
+          dialogOpened = true;
+          this.addLog('内嵌 URL 对话框已出现');
+        } catch {
+          this.addLog(`⚠️ 第 ${attempt} 次点击后未出现内嵌 URL 对话框`);
+          await page.keyboard.press('Escape');
+          await randomDelay(400, 650);
         }
       }
-      this.addLog(`已点击菜单项: ${embedMenuClicked}`);
-      await randomDelay(1000, 1500);
 
-      // 等待对话框出现
-      try {
-        await page.waitForSelector('[role="dialog"] input, [role="dialog"] textarea', { timeout: 8000 });
-        this.addLog('对话框已出现');
-      } catch {
-        this.addLog('⚠️ 对话框未出现，尝试继续...');
-      }
-
-      // 在输入框中填入 URL
-      const urlFilled = await page.evaluate((url: string) => {
-        const dialog = document.querySelector('[role="dialog"]') || document;
-        const inputs = Array.from(dialog.querySelectorAll('input, textarea')) as HTMLInputElement[];
-        const urlInput = inputs.find(i => {
-          const label = (i.getAttribute('aria-label') || i.placeholder || '').toLowerCase();
-          return label.includes('url') || label.includes('link') || label.includes('链接') || label.includes('网址') || i.type === 'url' || i.type === 'text';
-        }) || inputs[0];
-        if (urlInput) {
-          urlInput.focus();
-          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(urlInput, url);
-          else urlInput.value = url;
-          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
-          urlInput.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
-        }
-        return false;
-      }, embedUrl);
-
-      if (!urlFilled) {
-        this.addLog('⚠️ 未找到 URL 输入框，跳过内嵌网站');
-        await page.keyboard.press('Escape');
+      if (!dialogOpened) {
+        this.addLog('⚠️ 无法打开内嵌 URL 对话框，已跳过该内嵌块');
         return;
       }
-      this.addLog(`已填入 URL: ${embedUrl}`);
-      await randomDelay(500, 800);
+
+      // 在真实对话框中使用鼠标聚焦和键盘输入，触发 Google Sites 的 jsaction/预览逻辑。
+      const urlInputTarget = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) return null;
+        const input = Array.from(dialog.querySelectorAll('input, textarea')).find((candidate) => {
+          const element = candidate as HTMLInputElement;
+          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.toLowerCase();
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && (
+            label.includes('url') || label.includes('link') || label.includes('链接') || label.includes('网址') || element.type === 'url' || element.type === 'text'
+          );
+        }) as HTMLInputElement | undefined;
+        if (!input) return null;
+        const rect = input.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+
+      if (!urlInputTarget) {
+        this.addLog('⚠️ 未找到内嵌 URL 输入框，跳过内嵌网站');
+        await this.clickVisibleText(page, ['取消', 'Cancel'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+        return;
+      }
+      await page.mouse.click(urlInputTarget.x, urlInputTarget.y);
+      await page.keyboard.press('Control+A');
+      await page.keyboard.type(embedUrl, { delay: 8 });
+      // Tab 会触发 Google Sites 对 URL 的预览请求；没有这一步通用网站卡片不会生成。
+      await page.keyboard.press('Tab');
+      this.addLog(`已填入 URL 并触发预览: ${embedUrl}`);
+      await randomDelay(1800, 2500);
+
+      if (embedType === 'generic') {
+        const fullPageCard = await page.evaluate(() => {
+          const texts = ['整个页面', 'Entire page'];
+          const element = Array.from(document.querySelectorAll('[role="dialog"] *')).find((candidate) => {
+            const label = (candidate.textContent ?? '').trim();
+            const rect = (candidate as HTMLElement).getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && texts.some(text => label === text || label.includes(text));
+          }) as HTMLElement | undefined;
+          if (!element) return null;
+          const target = element.querySelector('[jsname="jkaScf"]') as HTMLElement | null ?? element;
+          const rect = target.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        if (fullPageCard) {
+          await page.mouse.click(fullPageCard.x, fullPageCard.y);
+          this.addLog('已选择“整个页面 / Entire page”内嵌卡片');
+          await randomDelay(500, 800);
+        } else {
+          this.addLog('⚠️ 未出现“整个页面”预览卡片，将尝试使用默认嵌入方式');
+        }
+      }
 
       // 点击"下一步"或"预览"或"插入"按鈕
       let nextClicked = await this.clickVisibleText(page, ['下一步', 'Next', '预览', 'Preview'], '[role="dialog"] button, [role="dialog"] [role="button"]');
