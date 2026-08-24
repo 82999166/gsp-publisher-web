@@ -575,7 +575,6 @@ export class GoogleSitesPublisher {
         else input.value = url;
         input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: url }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'v' }));
         const rect = input.getBoundingClientRect();
         return {
           x: rect.left + rect.width / 2,
@@ -583,6 +582,16 @@ export class GoogleSitesPublisher {
           value: input.value.trim(),
           label: `${input.getAttribute('aria-label') ?? ''} ${input.getAttribute('placeholder') ?? ''}`.trim(),
           candidateCount: candidates.length,
+          candidates: candidates.map((candidate) => ({
+            tag: candidate.tagName,
+            type: (candidate as HTMLInputElement).type ?? '',
+            ariaLabel: candidate.getAttribute('aria-label') ?? '',
+            placeholder: candidate.getAttribute('placeholder') ?? '',
+            name: candidate.getAttribute('name') ?? '',
+            id: candidate.id,
+            value: candidate.value,
+            role: candidate.getAttribute('role') ?? '',
+          })),
         };
       }, embedUrl);
 
@@ -591,12 +600,24 @@ export class GoogleSitesPublisher {
         await this.clickDialogAction(page, ['取消', 'Cancel']);
         return false;
       }
-      this.addLog(`已定位内嵌 URL 输入框: ${urlFillResult.label || '未标注'}（候选 ${urlFillResult.candidateCount} 个）`);
+      this.addLog(`已定位内嵌 URL 输入框: ${urlFillResult.label || '未标注'}（候选 ${urlFillResult.candidateCount} 个）: ${JSON.stringify(urlFillResult.candidates)}`);
       await page.mouse.click(urlFillResult.x, urlFillResult.y);
-      // 不使用 Tab/Enter：这两个按键会在部分 Google Sites 版本中关闭嵌入弹窗。
+      // 不使用 Tab/Enter/keyup：这些键盘动作会在部分 Google Sites 版本中关闭内嵌弹窗。
       // 原生 input/change 事件已在上方触发；保持焦点，让 Sites 在当前对话框内异步加载预览。
       await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       this.addLog(`已填入 URL，保持输入框焦点等待预览: ${embedUrl}`);
+      try { await page.screenshot({ path: '/tmp/gsp_embed_after_url_input.png', fullPage: false }); } catch {}
+      const dialogAfterInput = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const active = document.activeElement as HTMLElement | null;
+        const inputs = Array.from(dialog?.querySelectorAll('input, textarea') || []) as Array<HTMLInputElement | HTMLTextAreaElement>;
+        return {
+          dialogOpen: Boolean(dialog),
+          activeElement: active ? { tag: active.tagName, ariaLabel: active.getAttribute('aria-label') ?? '', value: (active as HTMLInputElement).value ?? '' } : null,
+          inputs: inputs.map((input) => ({ ariaLabel: input.getAttribute('aria-label') ?? '', placeholder: input.getAttribute('placeholder') ?? '', value: input.value })),
+        };
+      });
+      this.addLog(`内嵌 URL 输入后弹窗状态: ${JSON.stringify(dialogAfterInput)}`);
       const enteredUrl = await page.evaluate((expectedUrl) => {
         const dialog = document.querySelector('[role="dialog"]');
         const inputs = Array.from(dialog?.querySelectorAll('input, textarea') || []) as Array<HTMLInputElement | HTMLTextAreaElement>;
