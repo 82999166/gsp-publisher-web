@@ -103,6 +103,7 @@ export default function PublishTasks() {
 
   // 当前正在轮询的任务 ID
   const [pollingTaskId, setPollingTaskId] = useState<number | null>(null);
+  const [startingTaskId, setStartingTaskId] = useState<number | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const createMutation = trpc.tasks.create.useMutation({
@@ -139,17 +140,18 @@ export default function PublishTasks() {
 
   // executeTask mutation - 异步触发，立即返回
   const executeTaskMutation = trpc.publisher.executeTask.useMutation({
-    onMutate: ({ taskId }: { taskId: number }) => {
-      setPollingTaskId(taskId);
-      setLogLines([`[${new Date().toLocaleTimeString()}] 开始执行发布任务 #${taskId}...`]);
-      setLogOpen(true);
-    },
     onSuccess: (_data: any, variables: { taskId: number }) => {
-      // 任务已加入队列，开始轮询
+      // 服务端已经将任务可靠地切换为 running 后，再一次性开启本地轮询与日志视图。
+      // 避免点击事件内与任务列表轮询同时切换多组状态，造成 Portal/表格节点竞争卸载。
+      setStartingTaskId(null);
+      setPollingTaskId(variables.taskId);
+      setLogLines([`[${new Date().toLocaleTimeString()}] 发布任务 #${variables.taskId} 已启动，正在连接发布引擎...`]);
+      setLogOpen(true);
       toast.info("发布任务已启动，正在后台执行...");
       utils.tasks.list.invalidate();
     },
     onError: (e: any) => {
+      setStartingTaskId(null);
       setPollingTaskId(null);
       utils.tasks.list.invalidate();
       setLogLines(prev => [
@@ -231,6 +233,7 @@ export default function PublishTasks() {
       toast.error("该任务未关联素材，无法执行发布");
       return;
     }
+    setStartingTaskId(task.id);
     executeTaskMutation.mutate({ taskId: task.id });
   }
 
@@ -241,7 +244,7 @@ export default function PublishTasks() {
     }
   }, [logLines, logOpen]);
 
-  const isExecuting = pollingTaskId !== null;
+  const isExecuting = pollingTaskId !== null || startingTaskId !== null;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -343,7 +346,7 @@ export default function PublishTasks() {
             <TableBody>
               {(tasks as Task[]).map((task) => {
                 const account = (accounts as any[]).find((a: any) => a.id === task.accountId);
-                const isThisExecuting = pollingTaskId === task.id;
+                const isThisExecuting = pollingTaskId === task.id || startingTaskId === task.id;
                 return (
                   <TableRow key={task.id} className={isThisExecuting ? "bg-blue-50/50" : selectedIds.has(task.id) ? "bg-muted/50" : ""}>
                     <TableCell>
@@ -404,7 +407,8 @@ export default function PublishTasks() {
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50"
-                            disabled={isExecuting || executeTaskMutation.isPending}
+                            disabled={isExecuting || executeTaskMutation.isPending || !task.materialId}
+                            title={!task.materialId ? "请先为任务关联一篇已审核素材" : "执行发布任务"}
                             onClick={() => handleExecute(task)}
                           >
                             {isThisExecuting ? (
@@ -412,7 +416,7 @@ export default function PublishTasks() {
                             ) : (
                               <Zap className="h-3 w-3" />
                             )}
-                            执行
+                            {task.materialId ? "执行" : "缺少素材"}
                           </Button>
                         )}
                         {/* 失败任务：重试 */}
@@ -593,67 +597,92 @@ export default function PublishTasks() {
         </DialogContent>
       </Dialog>
 
-      {/* Log Dialog */}
-      <Dialog open={logOpen} onOpenChange={(open) => {
-        if (!open && isExecuting) {
-          // 执行中允许关闭对话框，但继续后台轮询
-        }
-        setLogOpen(open);
-        if (!open) setViewLogTask(null);
-      }}>
-        <DialogContent className="max-w-3xl w-full">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScrollText className="h-4 w-4" />
-              {isExecuting ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                  发布引擎运行日志（实时更新）
-                </span>
+      {/*
+       * 发布日志使用组件内遮罩层而非 Portal。执行 mutation 时任务列表会频繁失效重取，
+       * Portal 与页面节点同时卸载会在 React 19/Radix 组合下触发 removeChild 异常。
+       */}
+      {logOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setLogOpen(false);
+              setViewLogTask(null);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="发布任务日志"
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg border bg-background p-6 shadow-xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <ScrollText className="h-4 w-4" />
+                  {isExecuting ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                      发布引擎运行日志（实时更新）
+                    </span>
+                  ) : (
+                    `任务日志${viewLogTask ? ` — ${viewLogTask.name}` : ""}`
+                  )}
+                </h2>
+                {isExecuting && (
+                  <p className="mt-1 text-sm text-muted-foreground">发布引擎正在后台运行，每 2 秒自动刷新日志。</p>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setLogOpen(false);
+                  setViewLogTask(null);
+                }}
+              >
+                关闭
+              </Button>
+            </div>
+            <div className="h-[520px] overflow-y-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs">
+              {logLines.length === 0 ? (
+                <p className="text-zinc-500">等待日志输出...</p>
               ) : (
-                `任务日志${viewLogTask ? ` — ${viewLogTask.name}` : ""}`
+                logLines.map((line, i) => (
+                  <div
+                    key={`${i}-${line}`}
+                    className={`leading-5 ${
+                      line.includes("✅") || line.includes("成功")
+                        ? "text-emerald-400"
+                        : line.includes("❌") || line.includes("失败") || line.includes("错误") || line.includes("异常")
+                        ? "text-red-400"
+                        : line.includes("⚠") || line.includes("警告")
+                        ? "text-amber-400"
+                        : "text-zinc-300"
+                    }`}
+                  >
+                    {line}
+                  </div>
+                ))
               )}
-            </DialogTitle>
-            {isExecuting && (
-              <DialogDescription>发布引擎正在后台运行，每2秒自动刷新日志...</DialogDescription>
-            )}
-          </DialogHeader>
-          <div className="bg-zinc-950 rounded-lg p-4 h-[520px] overflow-y-auto font-mono text-xs">
-            {logLines.length === 0 ? (
-              <p className="text-zinc-500">等待日志输出...</p>
-            ) : (
-              logLines.map((line, i) => (
-                <div
-                  key={i}
-                  className={`leading-5 ${
-                    line.includes("✅") || line.includes("成功")
-                      ? "text-emerald-400"
-                      : line.includes("❌") || line.includes("失败") || line.includes("错误") || line.includes("异常")
-                      ? "text-red-400"
-                      : line.includes("⚠") || line.includes("警告")
-                      ? "text-amber-400"
-                      : "text-zinc-300"
-                  }`}
-                >
-                  {line}
-                </div>
-              ))
-            )}
-            <div ref={logEndRef} />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setLogOpen(false);
-                setViewLogTask(null);
-              }}
-            >
-              {isExecuting ? "后台继续执行，关闭日志" : "关闭"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <div ref={logEndRef} />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLogOpen(false);
+                  setViewLogTask(null);
+                }}
+              >
+                {isExecuting ? "后台继续执行，关闭日志" : "关闭"}
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Help Dialog */}
       <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
