@@ -469,7 +469,7 @@ export class GoogleSitesPublisher {
   }
 
   /** 通过 Google Sites 工具栏插入内嵌网站板块 */
-  private async insertEmbedBlock(page: Page, embedUrl: string, embedHeight: number): Promise<void> {
+  private async insertEmbedBlock(page: Page, embedUrl: string, embedHeight: number): Promise<boolean> {
     this.addLog(`插入内嵌网站: ${embedUrl} (高度: ${embedHeight}px)`);
     
     // 检测 URL 类型
@@ -518,7 +518,7 @@ export class GoogleSitesPublisher {
 
       if (!dialogOpened) {
         this.addLog('⚠️ 无法打开内嵌 URL 对话框，已跳过该内嵌块');
-        return;
+        return false;
       }
 
       // 在真实对话框中使用鼠标聚焦和键盘输入，触发 Google Sites 的 jsaction/预览逻辑。
@@ -540,8 +540,8 @@ export class GoogleSitesPublisher {
 
       if (!urlInputTarget) {
         this.addLog('⚠️ 未找到内嵌 URL 输入框，跳过内嵌网站');
-        await this.clickVisibleText(page, ['取消', 'Cancel'], '[role="dialog"] button, [role="dialog"] [role="button"]');
-        return;
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return false;
       }
       await page.mouse.click(urlInputTarget.x, urlInputTarget.y);
       // Puppeteer 的 KeyInput 不支持 "Control+A" 这样的组合字符串；必须拆分
@@ -553,6 +553,16 @@ export class GoogleSitesPublisher {
       // Tab 会触发 Google Sites 对 URL 的预览请求；没有这一步通用网站卡片不会生成。
       await page.keyboard.press('Tab');
       this.addLog(`已填入 URL 并触发预览: ${embedUrl}`);
+      const enteredUrl = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const input = dialog?.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
+        return input?.value?.trim() || '';
+      });
+      if (enteredUrl !== embedUrl.trim()) {
+        this.addLog(`⚠️ 内嵌 URL 未写入输入框（当前值: ${enteredUrl || '空'}），已中止该嵌入`);
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return false;
+      }
       await randomDelay(1800, 2500);
 
       // 部分 Google Sites 版本仅在 Enter 后真正加载预览卡片。
@@ -618,20 +628,33 @@ export class GoogleSitesPublisher {
         }
         if (dialogClosed) {
           this.addLog(`✅ 内嵌网站插入完成: ${embedUrl}`);
+          return true;
         } else {
           // 未关闭代表 Google Sites 尚未接受嵌入（常见原因是目标站点禁止 iframe）。
           // 不再把这种情况记录为成功，避免发布日志与实际页面不一致。
           this.addLog(`⚠️ 内嵌网站未被 Google Sites 接受：${embedUrl}。请确认目标网址允许 iframe 嵌入。`);
-          await this.clickVisibleText(page, ['取消', 'Cancel'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+          await this.clickDialogAction(page, ['取消', 'Cancel']);
           await randomDelay(600, 900);
+          return false;
         }
       } else {
-        this.addLog('⚠️ 未找到确认按鈕，跳过');
-        await page.keyboard.press('Escape');
+        const dialogDetails = await page.evaluate(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          return Array.from(dialog?.querySelectorAll('button, [role="button"], input, textarea') || []).map((el) => ({
+            tag: el.tagName,
+            text: (el.textContent || '').trim().slice(0, 80),
+            ariaLabel: el.getAttribute('aria-label'),
+            value: (el as HTMLInputElement).value || null,
+          }));
+        });
+        this.addLog(`⚠️ 未找到 Insert 确认按钮，已中止嵌入。弹窗元素: ${JSON.stringify(dialogDetails)}`);
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return false;
       }
     } catch (err) {
       this.addLog(`内嵌网站插入失败: ${err}`);
-      try { await page.keyboard.press('Escape'); } catch {}
+      try { await this.clickDialogAction(page, ['取消', 'Cancel']); } catch {}
+      return false;
     }
   }
 
@@ -893,12 +916,17 @@ export class GoogleSitesPublisher {
     // ── 阶段3：插入内嵌网站板块（如果有）──────────────────────────────────────
     if (embedBlocks && embedBlocks.length > 0) {
       this.addLog(`开始插入 ${embedBlocks.length} 个内嵌网站板块...`);
+      const failedEmbedUrls: string[] = [];
       for (const block of embedBlocks) {
         if (block.embedUrl) {
           const heightNum = typeof block.embedHeight === 'string' ? parseInt(block.embedHeight) || 600 : (block.embedHeight ?? 600);
-          await this.insertEmbedBlock(page, block.embedUrl, heightNum);
+          const inserted = await this.insertEmbedBlock(page, block.embedUrl, heightNum);
+          if (!inserted) failedEmbedUrls.push(block.embedUrl);
           await randomDelay(1000, 1500);
         }
+      }
+      if (failedEmbedUrls.length > 0) {
+        throw new Error(`内嵌网站未成功插入，已停止发布：${failedEmbedUrls.join(', ')}`);
       }
     }
 
