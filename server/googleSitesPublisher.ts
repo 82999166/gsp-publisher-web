@@ -521,43 +521,61 @@ export class GoogleSitesPublisher {
         return false;
       }
 
-      // 在真实对话框中使用鼠标聚焦和键盘输入，触发 Google Sites 的 jsaction/预览逻辑。
-      const urlInputTarget = await page.evaluate(() => {
+      // Google Sites 的嵌入弹窗可能同时渲染隐藏输入框，不能使用“第一个 input”。
+      // 优先锁定 aria-label/placeholder 带 Paste URL、URL 或 link 的可见真实输入框。
+      const urlFillResult = await page.evaluate((url) => {
         const dialog = document.querySelector('[role="dialog"]');
         if (!dialog) return null;
-        const input = Array.from(dialog.querySelectorAll('input, textarea')).find((candidate) => {
+        const candidates = Array.from(dialog.querySelectorAll('input, textarea')).filter((candidate) => {
           const element = candidate as HTMLInputElement;
-          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.toLowerCase();
           const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && (
-            label.includes('url') || label.includes('link') || label.includes('链接') || label.includes('网址') || element.type === 'url' || element.type === 'text'
-          );
-        }) as HTMLInputElement | undefined;
+          return rect.width > 0 && rect.height > 0 && !element.disabled && element.getAttribute('aria-hidden') !== 'true';
+        }) as Array<HTMLInputElement | HTMLTextAreaElement>;
+        const score = (element: HTMLInputElement | HTMLTextAreaElement) => {
+          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.toLowerCase();
+          if (label.includes('paste the url') || label.includes('paste url')) return 100;
+          if (label.includes('url') || label.includes('link') || label.includes('链接') || label.includes('网址')) return 90;
+          if (element.type === 'url') return 80;
+          if (element.type === 'text') return 20;
+          return 0;
+        };
+        const input = candidates.sort((a, b) => score(b) - score(a))[0];
         if (!input) return null;
-        const rect = input.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      });
 
-      if (!urlInputTarget) {
+        input.focus();
+        const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+        if (setter) setter.call(input, url);
+        else input.value = url;
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: url }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'v' }));
+        const rect = input.getBoundingClientRect();
+        return {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+          value: input.value.trim(),
+          label: `${input.getAttribute('aria-label') ?? ''} ${input.getAttribute('placeholder') ?? ''}`.trim(),
+          candidateCount: candidates.length,
+        };
+      }, embedUrl);
+
+      if (!urlFillResult) {
         this.addLog('⚠️ 未找到内嵌 URL 输入框，跳过内嵌网站');
         await this.clickDialogAction(page, ['取消', 'Cancel']);
         return false;
       }
-      await page.mouse.click(urlInputTarget.x, urlInputTarget.y);
-      // Puppeteer 的 KeyInput 不支持 "Control+A" 这样的组合字符串；必须拆分
-      // 修饰键和字符键，否则会抛出 Unknown key 并中断整个内嵌流程。
-      await page.keyboard.down('Control');
-      await page.keyboard.press('A');
-      await page.keyboard.up('Control');
-      await page.keyboard.type(embedUrl, { delay: 8 });
-      // Tab 会触发 Google Sites 对 URL 的预览请求；没有这一步通用网站卡片不会生成。
+      this.addLog(`已定位内嵌 URL 输入框: ${urlFillResult.label || '未标注'}（候选 ${urlFillResult.candidateCount} 个）`);
+      await page.mouse.click(urlFillResult.x, urlFillResult.y);
+      // Tab 使 Google Sites 的 jsaction 提交由原生 setter 触发的输入，进而加载预览。
       await page.keyboard.press('Tab');
       this.addLog(`已填入 URL 并触发预览: ${embedUrl}`);
-      const enteredUrl = await page.evaluate(() => {
+      const enteredUrl = await page.evaluate((expectedUrl) => {
         const dialog = document.querySelector('[role="dialog"]');
-        const input = dialog?.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
+        const inputs = Array.from(dialog?.querySelectorAll('input, textarea') || []) as Array<HTMLInputElement | HTMLTextAreaElement>;
+        const input = inputs.find((candidate) => candidate.value.trim() === expectedUrl) ?? inputs[0];
         return input?.value?.trim() || '';
-      });
+      }, embedUrl.trim());
       if (enteredUrl !== embedUrl.trim()) {
         this.addLog(`⚠️ 内嵌 URL 未写入输入框（当前值: ${enteredUrl || '空'}），已中止该嵌入`);
         await this.clickDialogAction(page, ['取消', 'Cancel']);
