@@ -609,15 +609,46 @@ export class GoogleSitesPublisher {
       }
       await randomDelay(1800, 2500);
 
-      // 部分 Google Sites 版本仅在 Enter 后真正加载预览卡片。
+      // 某些版本有明确的 Next/Preview 操作；没有该操作时绝不能按 Enter，
+      // 因为 Enter 会关闭当前内嵌对话框而不是加载预览。
       const previewAction = await this.clickDialogAction(page, ['下一步', 'Next', '预览', 'Preview']);
       if (previewAction) {
         this.addLog(`已点击预览动作: ${previewAction}`);
       } else {
-        await page.keyboard.press('Enter');
-        this.addLog('未发现预览动作，已按 Enter 触发预览');
+        this.addLog('未发现单独的预览动作，等待 Google Sites 自动加载预览（不按 Enter）');
       }
-      await randomDelay(2500, 3500);
+      try {
+        await page.waitForFunction(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          if (!dialog) return false;
+          const text = dialog.textContent ?? '';
+          const hasFullPageCard = /整个页面|Entire page/i.test(text);
+          const hasInsertAction = Array.from(dialog.querySelectorAll('button, [role="button"]')).some((element) =>
+            /插入|Insert/i.test(`${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`),
+          );
+          return hasFullPageCard || hasInsertAction;
+        }, { timeout: 10000 });
+        this.addLog('内嵌预览或 Insert 动作已出现');
+      } catch {
+        const previewDetails = await page.evaluate(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          if (!dialog) return { dialogOpen: false, text: '', elements: [] as unknown[] };
+          return {
+            dialogOpen: true,
+            text: (dialog.textContent ?? '').trim().slice(0, 600),
+            elements: Array.from(dialog.querySelectorAll('button, [role="button"], input, textarea')).map((element) => ({
+              tag: element.tagName,
+              text: (element.textContent ?? '').trim().slice(0, 80),
+              ariaLabel: element.getAttribute('aria-label'),
+              value: (element as HTMLInputElement).value ?? null,
+            })),
+          };
+        });
+        this.addLog(`⚠️ 等待内嵌预览超时，已中止嵌入。弹窗状态: ${JSON.stringify(previewDetails)}`);
+        try { await page.screenshot({ path: '/tmp/gsp_embed_preview_timeout.png', fullPage: false }); } catch {}
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return false;
+      }
 
       if (embedType === 'generic') {
         const fullPageCard = await page.evaluate(() => {
