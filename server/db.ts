@@ -130,7 +130,8 @@ export async function getMaterialById(id: number) {
 export async function createMaterial(data: InsertMaterial) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(materials).values(data);
+  const result = await db.insert(materials).values(data);
+  return Number(result[0].insertId);
 }
 
 export async function updateMaterial(id: number, data: Partial<InsertMaterial>) {
@@ -161,7 +162,8 @@ export async function getPublishTaskById(id: number) {
 export async function createPublishTask(data: InsertPublishTask) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(publishTasks).values(data);
+  const result = await db.insert(publishTasks).values(data);
+  return Number(result[0].insertId);
 }
 
 export async function updatePublishTask(id: number, data: Partial<InsertPublishTask>) {

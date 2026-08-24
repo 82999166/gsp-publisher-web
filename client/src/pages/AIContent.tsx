@@ -96,7 +96,7 @@ function HelpTooltip() {
             <p><strong className="text-foreground">2. 竞争度分析：</strong>点击关键词旁的「分析」按钮，AI 自动评估搜索量、竞争难度和优先级，帮助优先生成高价值文章。</p>
             <p><strong className="text-foreground">3. 关键词扩展：</strong>选择关键词后点击「AI扩展」，系统自动生成相关长尾关键词。</p>
             <p><strong className="text-foreground">4. 生成文章：</strong>选择关键词、语言和文章类型，点击「生成文章」。AI 将生成 SEO 优化的高质量内容。</p>
-            <p><strong className="text-foreground">5. 内容审核：</strong>生成的文章保存到素材库，需在素材库中审核后方可发布。</p>
+            <p><strong className="text-foreground">5. 自动发布：</strong>批量生成成功后，系统会跳过人工审核，自动加入顺序发布队列。</p>
             <p><strong className="text-foreground">6. 优先级说明：</strong>高搜索量+低竞争=高优先级，优先生成这类文章可获得最佳 SEO 效果。</p>
           </div>
         </DialogContent>
@@ -204,8 +204,6 @@ export default function AIContent() {
   const [batchGenDialogOpen, setBatchGenDialogOpen] = useState(false);
   const [batchGenName, setBatchGenName] = useState("");
   const [batchConcurrency, setBatchConcurrency] = useState(3);
-  const [batchAutoApprove, setBatchAutoApprove] = useState(70);
-  const [batchAutoQueue, setBatchAutoQueue] = useState(false);
   const [batchInsertKws, setBatchInsertKws] = useState<string[]>([]);
   const [batchInsertKwInput, setBatchInsertKwInput] = useState("");
   const [batchAnchorLinks, setBatchAnchorLinks] = useState<{anchorText:string;url:string;position:"intro"|"body"|"end"}[]>([]);
@@ -253,8 +251,8 @@ export default function AIContent() {
       minWords: genMinWords,
       style: genStyle as any,
       concurrency: batchConcurrency,
-      autoApproveThreshold: batchAutoApprove,
-      autoQueue: batchAutoQueue,
+      autoApproveThreshold: 0,
+      autoQueue: true,
       templateId: batchTemplateId ?? undefined,
       insertKeywords: batchInsertKws,
       anchorLinks: batchAnchorLinks,
@@ -1008,35 +1006,10 @@ export default function AIContent() {
                 />
                 <p className="text-[10px] text-muted-foreground">建议 3-5，过高可能触发 API 限速</p>
               </div>
-              <div className="space-y-1.5">
-                <Label>自动通过质量分阈值（0=不自动通过）</Label>
-                <Input
-                  type="number" min={0} max={100}
-                  value={batchAutoApprove}
-                  onChange={e => setBatchAutoApprove(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-                />
-                <p className="text-[10px] text-muted-foreground">达到此分数的文章自动跳过审核</p>
-              </div>
             </div>
-            {/* 自动加入发布队列 */}
-            <div className="flex items-center justify-between rounded-lg border border-border p-3">
-              <div>
-                <p className="text-sm font-medium">生成后自动加入发布队列</p>
-                <p className="text-xs text-muted-foreground">文章生成并通过质量分后，自动创建发布任务</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={batchAutoQueue}
-                onClick={() => setBatchAutoQueue(v => !v)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
-                  batchAutoQueue ? 'bg-primary' : 'bg-muted'
-                }`}
-              >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  batchAutoQueue ? 'translate-x-6' : 'translate-x-1'
-                }`} />
-              </button>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+              <p className="text-sm font-medium text-emerald-800">生成成功后自动发布</p>
+              <p className="text-xs text-emerald-700 mt-0.5">批量文章将跳过人工审核，自动创建发布任务并按顺序发布；失败任务会保留日志。</p>
             </div>
             {/* 指定插入关键词 */}
             <div className="space-y-2">
@@ -1172,7 +1145,7 @@ export default function AIContent() {
       </Dialog>
       {/* Batch Dialog */}
       <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[min(92vw,38rem)] max-w-none max-h-[calc(100dvh-2rem)] overflow-y-auto p-6">
           <DialogHeader>
             <DialogTitle>批量添加关键词</DialogTitle>
           </DialogHeader>
@@ -1193,7 +1166,7 @@ export default function AIContent() {
             <div className="space-y-1.5">
               <Label>关键词列表（每行一个）</Label>
               <Textarea
-                className="h-40 resize-none font-mono text-sm"
+                className="h-56 min-h-40 resize-y font-mono text-sm"
                 placeholder={"关键词1\n关键词2\n关键词3"}
                 value={batchText}
                 onChange={e => setBatchText(e.target.value)}

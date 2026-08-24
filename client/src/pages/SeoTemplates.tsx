@@ -15,7 +15,7 @@ import { getTemplatePublishSettings } from "@shared/templateEmbedMigration";
 import { toast } from "sonner";
 import {
   Plus, Zap, BookOpen, List, BarChart2, MapPin, Edit2, Trash2, Play,
-  ChevronDown, ChevronUp, Eye, X, Link2, Globe, Image, Table2,
+  ChevronDown, ChevronUp, Eye, X, Link2, Image, Table2,
   HelpCircle, Heading1, Heading2, Heading3, AlignLeft, Settings2, FileText,
   GripVertical, Type, Maximize2, AlignCenter, AlignLeft as AlignLeftIcon, AlignRight,
   Monitor, Smartphone, Tablet, ChevronRight, Layers, LayoutTemplate
@@ -29,7 +29,6 @@ const BLOCK_TYPES = [
   { type: "paragraph", label: "段落正文", icon: AlignLeft, color: "bg-blue-50 text-blue-700 border-blue-200", desc: "普通段落内容，支持关键词插入" },
   { type: "faq", label: "FAQ 问答", icon: HelpCircle, color: "bg-green-50 text-green-700 border-green-200", desc: "常见问题解答，提升SEO长尾词覆盖" },
   { type: "links", label: "超链接列表", icon: Link2, color: "bg-purple-50 text-purple-700 border-purple-200", desc: "相关推荐链接，可设置布局和样式" },
-  { type: "embed", label: "内嵌网站", icon: Globe, color: "bg-cyan-50 text-cyan-700 border-cyan-200", desc: "嵌入外部网页（iframe），可设置高度" },
   { type: "image", label: "图片占位", icon: Image, color: "bg-pink-50 text-pink-700 border-pink-200", desc: "图片展示区域，AI生成时自动填充" },
   { type: "table", label: "表格", icon: Table2, color: "bg-indigo-50 text-indigo-700 border-indigo-200", desc: "对比表格，适合评测和列表型文章" },
 ] as const;
@@ -49,11 +48,6 @@ interface TemplateBlock {
   linkColumns?: number;
   linkHeight?: number;
   linkStyle?: "card" | "list" | "button";
-  // 内嵌网站设置
-  embedUrl?: string;
-  embedWidth?: string;
-  embedHeight?: number;
-  embedPosition?: "top" | "bottom" | "inline";
   // 表格设置
   tableColumns?: string;
   tableRows?: number;
@@ -89,35 +83,13 @@ function getBlockTypeInfo(type: BlockType) {
   return BLOCK_TYPES.find(b => b.type === type) ?? BLOCK_TYPES[0];
 }
 
-/** 将旧模板级 embedUrl 无缝迁移到唯一的“内嵌网站”版块，避免用户重复配置。 */
-function getMigratedBlocks(template: any): TemplateBlock[] {
+/** 读取已支持的模板板块。 */
+function getTemplateBlocks(template: any): TemplateBlock[] {
   const structure = template.structure;
   const saved = Array.isArray(structure) ? structure : (structure?.blocks ?? []);
-  const blocks = (saved as TemplateBlock[]).map(block => ({ ...block }));
-  const legacyUrl = typeof template.embedUrl === "string" ? template.embedUrl.trim() : "";
-  if (!legacyUrl) return blocks;
-
-  if (blocks.some(block => block.type === "embed" && !!block.embedUrl?.trim())) return blocks;
-
-  const emptyEmbed = blocks.find(block => block.type === "embed" && !block.embedUrl);
-  if (emptyEmbed) {
-    emptyEmbed.embedUrl = legacyUrl;
-    emptyEmbed.embedWidth ||= template.embedWidth || "100%";
-    emptyEmbed.embedHeight ||= Number(template.embedHeight) || 300;
-    emptyEmbed.embedPosition ||= template.embedPosition || "bottom";
-  } else if (!blocks.some(block => block.type === "embed" && block.embedUrl === legacyUrl)) {
-    blocks.push({
-      id: `legacy-embed-${template.id}`,
-      type: "embed",
-      title: "内嵌网站",
-      contentHint: "",
-      embedUrl: legacyUrl,
-      embedWidth: template.embedWidth || "100%",
-      embedHeight: Number(template.embedHeight) || 300,
-      embedPosition: template.embedPosition || "bottom",
-    });
-  }
-  return blocks;
+  return (saved as TemplateBlock[])
+    .filter(block => BLOCK_TYPES.some(type => type.type === block.type))
+    .map(block => ({ ...block }));
 }
 
 // ─── 直观页面预览组件 ─────────────────────────────────────────────────────────
@@ -138,33 +110,6 @@ function PagePreview({ blocks, siteNameSuffix }: {
   }
 
   const siteName = siteNameSuffix ? `${previewKeyword} ${siteNameSuffix}` : previewKeyword;
-  // 构建预览内容（每一个内嵌网站都来自对应的版块配置）
-  const renderEmbedBlock = (url: string, w: string, h: number, label?: string) => (
-    <div className="rounded-lg overflow-hidden border border-cyan-200 bg-cyan-50/30">
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-100/50 border-b border-cyan-200">
-        <Globe className="h-3 w-3 text-cyan-600" />
-        <span className="text-xs text-cyan-700 font-medium">{label || "内嵌网站"}</span>
-        <span className="text-xs text-cyan-500 ml-auto">{w} × {h}px</span>
-      </div>
-      {url ? (
-        <div className="relative bg-white" style={{ height: Math.min(h, 200) }}>
-          <iframe
-            src={url}
-            className="w-full h-full border-0 pointer-events-none"
-            style={{ transform: "scale(0.7)", transformOrigin: "top left", width: "143%", height: "143%" }}
-            sandbox="allow-same-origin"
-            title="预览"
-          />
-          <div className="absolute inset-0 bg-transparent" />
-        </div>
-      ) : (
-        <div className="flex items-center justify-center bg-gray-50" style={{ height: Math.min(h, 120) }}>
-          <p className="text-xs text-muted-foreground">填写 URL 后显示预览</p>
-        </div>
-      )}
-    </div>
-  );
-
   return (
     <div className="h-full overflow-y-auto">
       {/* 模拟浏览器框 */}
@@ -247,15 +192,6 @@ function PagePreview({ blocks, siteNameSuffix }: {
                       </div>
                     ))}
                   </div>
-                </div>
-              );
-            }
-            if (block.type === "embed") {
-              const bEmbedH = block.embedHeight || 200;
-              const bEmbedW = block.embedWidth || "100%";
-              return (
-                <div key={block.id}>
-                  {renderEmbedBlock(block.embedUrl || "", bEmbedW, bEmbedH, `内嵌网站（${block.embedPosition === "top" ? "顶部" : block.embedPosition === "inline" ? "正文中" : "底部"}）`)}
                 </div>
               );
             }
@@ -424,38 +360,6 @@ function BlockEditor({ block, onChange, onDelete, onMoveUp, onMoveDown, isFirst,
                   </div>
                 )}
 
-                {/* 内嵌网站板块设置 */}
-                {block.type === "embed" && (
-                  <div className="space-y-3 p-3 bg-cyan-50/50 rounded-lg border border-cyan-100">
-                    <p className="text-xs font-medium text-cyan-700">内嵌网站板块设置</p>
-                    <div className="space-y-1">
-                      <Label className="text-xs">嵌入 URL</Label>
-                      <Input className="h-7 text-xs" placeholder="https://example.com（留空则由发布时指定）" value={block.embedUrl ?? ""} onChange={e => onChange({ ...block, embedUrl: e.target.value })} />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">宽度</Label>
-                        <Input className="h-7 text-xs" placeholder="100%" value={block.embedWidth ?? "100%"} onChange={e => onChange({ ...block, embedWidth: e.target.value })} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">高度 (px)</Label>
-                        <Input type="number" className="h-7 text-xs" min={100} max={2000} value={block.embedHeight ?? 300} onChange={e => onChange({ ...block, embedHeight: Number(e.target.value) })} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">嵌入位置</Label>
-                        <Select value={block.embedPosition ?? "inline"} onValueChange={v => onChange({ ...block, embedPosition: v as any })}>
-                          <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent className="z-[99999]">
-                            <SelectItem value="top">文章顶部</SelectItem>
-                            <SelectItem value="inline">正文中</SelectItem>
-                            <SelectItem value="bottom">文章底部</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* 表格设置 */}
                 {block.type === "table" && (
                   <div className="space-y-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
@@ -596,7 +500,7 @@ export default function SeoTemplates() {
   }
   function openEdit(tpl: any) {
     setEditingTemplate(tpl);
-    setBlocks(getMigratedBlocks(tpl));
+    setBlocks(getTemplateBlocks(tpl));
     const publishSettings = getTemplatePublishSettings(tpl.structure);
     setEditorForm({
       name: tpl.name, type: tpl.type, description: tpl.description ?? "",
@@ -618,9 +522,6 @@ export default function SeoTemplates() {
         linkColumns: type === "links" ? 2 : undefined,
         linkHeight: type === "links" ? 60 : undefined,
         linkStyle: type === "links" ? "card" : undefined,
-        embedHeight: type === "embed" ? 300 : undefined,
-        embedWidth: type === "embed" ? "100%" : undefined,
-        embedPosition: type === "embed" ? "inline" : undefined,
         tableRows: type === "table" ? 4 : undefined,
       };
       return [...bs, defaultBlock];
@@ -654,7 +555,6 @@ export default function SeoTemplates() {
       let line = `${i + 1}. [${info.label}] ${b.title}`;
       if (b.contentHint) line += `：${b.contentHint}`;
       if (b.type === "links") line += `（${b.linkColumns}列${b.linkStyle === "card" ? "卡片" : b.linkStyle === "list" ? "列表" : "按钮"}样式，高度${b.linkHeight}px）`;
-      if (b.type === "embed") line += `（嵌入高度${b.embedHeight}px${b.embedUrl ? `，URL：${b.embedUrl}` : ""}）`;
       if (b.type === "table") line += `（${b.tableRows}行，列：${b.tableColumns ?? "自动"}）`;
       lines.push(line);
     });
@@ -705,7 +605,7 @@ export default function SeoTemplates() {
         {(templates as any[]).map((tpl: any) => {
           const typeInfo = getTypeInfo(tpl.type);
           const Icon = typeInfo.icon;
-          const savedBlocks = getMigratedBlocks(tpl);
+          const savedBlocks = getTemplateBlocks(tpl);
           const publishSettings = getTemplatePublishSettings(tpl.structure);
           return (
             <Card key={tpl.id} className="hover:shadow-md transition-shadow">
@@ -909,7 +809,7 @@ export default function SeoTemplates() {
                 {/* 发布设置 */}
                 <div className="space-y-3 border-t pt-4">
                   <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                    <Globe className="h-4 w-4 text-primary" /> 发布设置
+                    <Settings2 className="h-4 w-4 text-primary" /> 发布设置
                   </h3>
                   <div className="space-y-1.5">
                     <Label className="text-xs">站点名称后缀</Label>
@@ -954,9 +854,6 @@ export default function SeoTemplates() {
                       <span className="block text-xs text-muted-foreground mt-0.5">自动识别 Markdown 标题、普通段落和列表，并在 Google Sites 中保留清晰间距与层级。</span>
                     </span>
                   </label>
-                  <p className="text-xs text-muted-foreground rounded-md bg-muted/60 px-3 py-2">
-                    内嵌网站请在上方「板块顺序与设置」中选择“内嵌网站”并点击编辑图标填写 URL、尺寸和位置。
-                  </p>
                 </div>
               </div>
             </div>
@@ -1063,10 +960,6 @@ export default function SeoTemplates() {
             <div>
               <p className="font-semibold text-foreground mb-1">板块样式设置</p>
               <p>展开板块编辑器后，切换到「样式设置」标签，可以调整字体大小、粗细和对齐方式，右侧预览区会实时更新效果。</p>
-            </div>
-            <div>
-              <p className="font-semibold text-foreground mb-1">内嵌网站怎么配置？</p>
-              <p>在「发布设置」区域填写内嵌网站 URL，可设置宽度、高度和嵌入位置（顶部/底部）。也可以在板块中添加「内嵌网站」板块，支持正文中嵌入。</p>
             </div>
           </div>
           <DialogFooter><Button onClick={() => setShowHelp(false)}>知道了</Button></DialogFooter>

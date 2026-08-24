@@ -78,8 +78,6 @@ puppeteerExtra.use(StealthPlugin());
  * 临时隔离内嵌网站浏览器交互，优先验证页面排版与 Banner 标题跳转。
  * 模板配置和 Markdown iframe 解析仍会保留；恢复时仅将此值改为 true。
  */
-export const GOOGLE_SITES_EMBED_PUBLISHING_ENABLED = false;
-
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 export interface PublishOptions {
   /** Google 账号 Cookie（JSON 数组格式，来自 Cookie-Editor 等插件） */
@@ -101,7 +99,6 @@ export interface PublishOptions {
   /** 操作超时（毫秒，默认 120000） */
   timeout?: number;
   /** 内嵌网站板块列表（来自 SEO 模板的内嵌配置） */
-  embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>;
   /** 模板样式设置（来自 SEO 模板的样式配置） */
   templateStyles?: {
     h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
@@ -147,10 +144,8 @@ export interface PublishResult {
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 type GoogleSitesSection = {
-  type: "h1" | "h2" | "h3" | "p" | "ol" | "ul" | "embed";
+  type: "h1" | "h2" | "h3" | "p" | "ol" | "ul";
   text: string;
-  embedUrl?: string;
-  embedHeight?: number;
 };
 
 /** 仅接受可安全用于 Google Sites 的外部 HTTP(S) 跳转网址。 */
@@ -173,7 +168,7 @@ export function cleanPublishedHeading(value: string): string {
     .trim();
 }
 
-/** 将 Markdown 内容转换为适合 Google Sites 的标题、段落、列表和内嵌块。 */
+/** 将 Markdown 内容转换为适合 Google Sites 的标题、段落和列表。 */
 export function markdownToPlainSections(markdown: string): GoogleSitesSection[] {
   const lines = markdown.split("\n");
   const sections: GoogleSitesSection[] = [];
@@ -197,6 +192,10 @@ export function markdownToPlainSections(markdown: string): GoogleSitesSection[] 
       flushParagraph();
       continue;
     }
+    if (/^<iframe\b/i.test(trimmed)) {
+      flushParagraph();
+      continue;
+    }
 
     if (trimmed.startsWith("### ")) {
       flushParagraph();
@@ -208,15 +207,6 @@ export function markdownToPlainSections(markdown: string): GoogleSitesSection[] 
       flushParagraph();
       sections.push({ type: "h1", text: cleanPublishedHeading(plainText(trimmed.slice(2))) });
     } else {
-      if (trimmed.includes('<iframe')) {
-        const srcMatch = trimmed.match(/src=["'](.*?)['"]/);
-        const heightMatch = trimmed.match(/height=["'](\d+)['"]/);
-        if (srcMatch && srcMatch[1]) {
-          flushParagraph();
-          sections.push({ type: 'embed', text: '', embedUrl: srcMatch[1], embedHeight: parseInt(heightMatch?.[1] || '300') });
-          continue;
-        }
-      }
       const ordered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
       const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
       if (ordered) {
@@ -225,7 +215,7 @@ export function markdownToPlainSections(markdown: string): GoogleSitesSection[] 
       } else if (unordered) {
         flushParagraph();
         sections.push({ type: "ul", text: `• ${cleanPublishedHeading(plainText(unordered[1]))}` });
-      } else if (!trimmed.includes('<iframe')) {
+      } else {
         paragraphLines.push(trimmed);
       }
     }
@@ -727,15 +717,10 @@ export class GoogleSitesPublisher {
   }
 
   /** 将内容按 Markdown 语义写入：标题加粗、段落留白、列表保持连续。 */
-  private async writeMarkdownSections(page: Page, sections: GoogleSitesSection[]): Promise<Array<{ embedUrl: string; embedHeight: number }>> {
-    const inlineEmbeds: Array<{ embedUrl: string; embedHeight: number }> = [];
+  private async writeMarkdownSections(page: Page, sections: GoogleSitesSection[]): Promise<void> {
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index];
       if (section.type === 'h1') continue;
-      if (section.type === 'embed') {
-        if (section.embedUrl) inlineEmbeds.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
-        continue;
-      }
       const isHeading = section.type === 'h2' || section.type === 'h3';
       const isList = section.type === 'ol' || section.type === 'ul';
       const nextIsList = sections[index + 1]?.type === 'ol' || sections[index + 1]?.type === 'ul';
@@ -756,14 +741,14 @@ export class GoogleSitesPublisher {
       if (!isList || !nextIsList) await page.keyboard.press('Enter');
       await randomDelay(10, 30);
     }
-    return inlineEmbeds;
   }
 
   /** 将模板的 H1 字号映射到 Google Sites 支持的字号菜单。 */
   private async applyBannerTitleFontSize(page: Page, title: string, templateSize?: string): Promise<void> {
-    // Google Sites 的 Banner 默认字号为 64，过大；将模板语义字号映射为其菜单中的可选值。
-    const sizeMap: Record<string, number> = { sm: 18, base: 24, lg: 30, xl: 36, "2xl": 36 };
-    const targetSize = sizeMap[templateSize ?? "xl"] ?? 36;
+    // Google Sites Banner 默认字号过大，长标题会产生突兀的大面积换行。
+    // 统一收敛到 18–24 的可读范围，模板未配置时默认使用 22。
+    const sizeMap: Record<string, number> = { sm: 18, base: 18, lg: 20, xl: 22, "2xl": 24 };
+    const targetSize = sizeMap[templateSize ?? "xl"] ?? 22;
 
     try {
       const selected = await page.evaluate((headline) => {
@@ -1122,7 +1107,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string, articleContentLinkUrl?: string, autoFormatContent = true): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string, articleContentLinkUrl?: string, autoFormatContent = true): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -1211,16 +1196,10 @@ export class GoogleSitesPublisher {
           await randomDelay(100, 200);
 
           // 按模板偏好写入正文；旧模板默认启用语义化自动排版。
-          const inlineEmbeds = autoFormatContent
-            ? await this.writeMarkdownSections(page, sections)
-            : await this.writeMarkdownSections(page, sections.map(section => section.type === 'h1' ? section : { ...section, type: section.type === 'embed' ? 'embed' : 'p' }));
+          await this.writeMarkdownSections(page, autoFormatContent ? sections : sections.map(section => section.type === 'h1' ? section : { ...section, type: 'p' as const }));
 
           contentWritten = true;
           this.addLog(`✅ 内容写入成功（通过 ${sel}），标题: ${title}，段落数: ${sections.length}`);
-          if (inlineEmbeds.length > 0) {
-            embedBlocks = [...(embedBlocks ?? []), ...inlineEmbeds];
-            this.addLog(`从内容中提取到 ${inlineEmbeds.length} 个 iframe 嵌入块`);
-          }
           break;
         }
       } catch (e) {
@@ -1247,15 +1226,9 @@ export class GoogleSitesPublisher {
 
           await page.keyboard.type(title, { delay: 15 });
           await page.keyboard.press('Enter');
-          const inlineEmbeds2 = autoFormatContent
-            ? await this.writeMarkdownSections(page, sections)
-            : await this.writeMarkdownSections(page, sections.map(section => section.type === 'h1' ? section : { ...section, type: section.type === 'embed' ? 'embed' : 'p' }));
+          await this.writeMarkdownSections(page, autoFormatContent ? sections : sections.map(section => section.type === 'h1' ? section : { ...section, type: 'p' as const }));
           contentWritten = true;
           this.addLog('✅ 内容写入成功（通过点击中央激活）');
-          if (inlineEmbeds2.length > 0) {
-            embedBlocks = [...(embedBlocks ?? []), ...inlineEmbeds2];
-            this.addLog(`从内容中提取到 ${inlineEmbeds2.length} 个 iframe 嵌入块`);
-          }
         }
       } catch (e) {
         this.addLog(`点击中央激活失败: ${e}`);
@@ -1369,82 +1342,7 @@ export class GoogleSitesPublisher {
       }
     }
 
-    // ── 阶段3：插入内嵌网站板块（如果有）──────────────────────────────────────
-    if (embedBlocks && embedBlocks.length > 0 && GOOGLE_SITES_EMBED_PUBLISHING_ENABLED) {
-      this.addLog(`开始插入 ${embedBlocks.length} 个内嵌网站板块...`);
-      const failedEmbedUrls: string[] = [];
-      for (const block of embedBlocks) {
-        if (block.embedUrl) {
-          const heightNum = typeof block.embedHeight === 'string' ? parseInt(block.embedHeight) || 600 : (block.embedHeight ?? 600);
-          const inserted = await this.insertEmbedBlock(page, block.embedUrl, heightNum);
-          if (!inserted) failedEmbedUrls.push(block.embedUrl);
-          await randomDelay(1000, 1500);
-        }
-      }
-      if (failedEmbedUrls.length > 0) {
-        throw new Error(`内嵌网站未成功插入，已停止发布：${failedEmbedUrls.join(', ')}`);
-      }
-    } else if (embedBlocks && embedBlocks.length > 0) {
-      this.addLog(`⚠️ 当前版本临时跳过 ${embedBlocks.length} 个内嵌网站板块，优先验证页面排版与 Banner 标题跳转；模板内嵌配置已保留。`);
-    }
-
-        // ── 阶段3.5：关闭嵌入类残留弹窗 ─────────────────────────────────────
-    // 嵌入弹窗特征：有 input/textarea；发布弹窗特征：没有 input
-    // 只关闭嵌入类弹窗，避免误关发布弹窗
-    this.addLog('检查并关闭嵌入类残留弹窗...');
-    let closeAttempts = 0;
-    while (closeAttempts < 8) {
-      const dialogState = await page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        if (!dialog) return { hasDialog: false, cancelPos: null };
-        const hasInput = dialog.querySelectorAll('input, textarea').length > 0;
-        if (!hasInput) return { hasDialog: false, cancelPos: null };
-        // 找 Cancel 按钮坐标
-        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-        const cancelBtn = btns.find(b => {
-          const t = b.textContent?.trim() || '';
-          return t === 'Cancel' || t === '取消' || t === '关闭';
-        });
-        if (cancelBtn) {
-          const rect = (cancelBtn as HTMLElement).getBoundingClientRect();
-          return { hasDialog: true, cancelPos: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } };
-        }
-        return { hasDialog: true, cancelPos: null };
-      });
-      if (!dialogState.hasDialog) break;
-      this.addLog(`发现嵌入类弹窗（第 ${closeAttempts + 1} 次）...`);
-      if (dialogState.cancelPos) {
-        this.addLog('点击 Cancel 按钮关闭弹窗');
-        await page.mouse.click(dialogState.cancelPos.x, dialogState.cancelPos.y);
-      } else {
-        await page.keyboard.press('Escape');
-      }
-      await randomDelay(800, 1000);
-      closeAttempts++;
-    }
-    await randomDelay(500, 800);
-    const embedDialogStillOpen = await page.evaluate(() => {
-      const dialog = document.querySelector('[role="dialog"]');
-      return !!dialog && dialog.querySelectorAll('input, textarea').length > 0;
-    });
-    if (embedDialogStillOpen) {
-      this.addLog('⚠️ 嵌入弹窗仍未关闭，尝试点击页面空白区域...');
-      await page.mouse.click(640, 200);
-      await randomDelay(800, 1000);
-      // 最后尝试：JS 直接点击 Cancel
-      await page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        if (!dialog) return;
-        const btns = Array.from(dialog.querySelectorAll('button, [role="button"]'));
-        const cancelBtn = btns.find(b => { const t = b.textContent?.trim() || ''; return t === 'Cancel' || t === '取消'; });
-        if (cancelBtn) (cancelBtn as HTMLElement).click();
-      });
-      await randomDelay(800, 1000);
-    } else {
-      this.addLog('✅ 嵌入类弹窗已关闭，可安全执行发布流程');
-    }
-
-    // 内嵌菜单对当前编辑器焦点敏感。待所有嵌入操作结束且残留对话框关闭后，再设置 Banner 标题链接。
+    // 内容和链接写入完成后，设置模板配置的跳转链接。
     if (contentWritten && articleContentLinkUrl) {
       await this.applyArticleContentLink(page, articleContentLinkUrl);
     } else if (contentWritten && bannerTitleLinkUrl) {
@@ -1713,7 +1611,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl, options.articleContentLinkUrl, options.autoFormatContent !== false);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl, options.articleContentLinkUrl, options.autoFormatContent !== false);
 
       this.addLog("发布任务完成！");
       return {

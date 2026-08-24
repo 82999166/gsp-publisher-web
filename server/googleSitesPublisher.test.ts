@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cleanPublishedHeading, GOOGLE_SITES_EMBED_PUBLISHING_ENABLED, markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
+import { cleanPublishedHeading, markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
 
 describe("Google Sites 内容解析", () => {
-  it("将 iframe 解析为嵌入块，而不是作为代码文字写入页面", () => {
+  it("忽略已废弃的 iframe 标签，不将其写入发布文本", () => {
     const sections = markdownToPlainSections([
       "# 美国移民申请流程",
       "开场正文。",
@@ -13,7 +13,6 @@ describe("Google Sites 内容解析", () => {
     expect(sections).toEqual([
       { type: "h1", text: "美国移民申请流程" },
       { type: "p", text: "开场正文。" },
-      { type: "embed", text: "", embedUrl: "https://example.com/widget", embedHeight: 480 },
       { type: "p", text: "结尾正文。" },
     ]);
   });
@@ -51,13 +50,6 @@ describe("Google Sites 内容解析", () => {
     expect(normalizeExternalHttpUrl("https://tdavips.com")).toBe("https://tdavips.com/");
     expect(normalizeExternalHttpUrl("javascript:alert(1)")).toBeUndefined();
     expect(normalizeExternalHttpUrl("not a url")).toBeUndefined();
-  });
-
-  it("当前发布阶段临时关闭内嵌网站浏览器交互，但保留内容解析能力", () => {
-    expect(GOOGLE_SITES_EMBED_PUBLISHING_ENABLED).toBe(false);
-    expect(markdownToPlainSections('<iframe src="https://example.com" height="300"></iframe>')).toEqual([
-      { type: "embed", text: "", embedUrl: "https://example.com", embedHeight: 300 },
-    ]);
   });
 
   it("发布前清理标题中的字数配额痕迹", () => {

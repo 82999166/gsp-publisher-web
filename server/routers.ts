@@ -22,7 +22,7 @@ import {
   getPublishTaskById,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
-import { getTemplatePublishSettings, migrateLegacyTemplateEmbedBlocks } from "@shared/templateEmbedMigration";
+import { getTemplatePublishSettings } from "@shared/templateEmbedMigration";
 import { createGoogleOAuthHandler } from "./googleOAuth";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
@@ -903,7 +903,7 @@ const seoTemplatesRouter = router({
     siteNameSuffix: z.string().optional(),
   })).mutation(async ({ input }) => {
     const { id, ...data } = input;
-    await updateSeoTemplate(id, { ...data, embedUrl: null, embedWidth: null, embedHeight: null, embedPosition: null });
+    await updateSeoTemplate(id, data);
     return { success: true };
   }),
 
@@ -1045,12 +1045,11 @@ async function runPublishTaskAsync(
       return [{ text, url, position }];
     });
   };
-  // 读取网站名称后缀、嵌入内容、版式和模板链接。
+  // 读取网站名称后缀、版式和模板链接。
   let siteNameSuffix = "";
   let bannerTitleLinkUrl = "";
   let articleContentLinkUrl = "";
   let autoFormatContent = true;
-  let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
   let templateStyles: {
     h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
     h2?: { fontSize?: string; fontWeight?: string; textAlign?: string };
@@ -1073,26 +1072,15 @@ async function runPublishTaskAsync(
         if ((tpl as any).siteNameSuffix) {
           siteNameSuffix = ((tpl as any).siteNameSuffix as string).trim();
         }
-        // 旧模板级嵌入配置兼容迁移到唯一的“内嵌网站”版块。
         const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
         const templatePublishSettings = getTemplatePublishSettings(structure);
         bannerTitleLinkUrl = templatePublishSettings.bannerTitleLinkUrl ?? "";
         articleContentLinkUrl = templatePublishSettings.articleContentLinkUrl ?? "";
         autoFormatContent = templatePublishSettings.autoFormatContent;
-        const normalizedBlocks = migrateLegacyTemplateEmbedBlocks(structure, {
-          templateId: tpl.id,
-          embedUrl: (tpl as any).embedUrl,
-          embedWidth: (tpl as any).embedWidth,
-          embedHeight: (tpl as any).embedHeight,
-          embedPosition: (tpl as any).embedPosition,
-        });
-
-        if (normalizedBlocks.length > 0) {
-            const structureEmbeds = normalizedBlocks.filter((b: any) => b.type === 'embed' && b.embedUrl)
-              .map((b: any) => ({ embedUrl: b.embedUrl as string, embedWidth: b.embedWidth as string | undefined, embedHeight: b.embedHeight as string | undefined, embedPosition: b.embedPosition as string | undefined }));
-            embedBlocks.push(...structureEmbeds);
+        const templateBlocks = Array.isArray((structure as any)?.blocks) ? (structure as any).blocks.filter((block: any) => block?.type !== 'embed') : [];
+        if (templateBlocks.length > 0) {
             const styles: NonNullable<typeof templateStyles> = {};
-            for (const block of normalizedBlocks) {
+            for (const block of templateBlocks) {
               const styleKey = block.type === "paragraph" ? "p" : (block.type ?? "");
               if (["h1", "h2", "h3", "p"].includes(styleKey) && (block.fontSize || block.fontWeight || block.textAlign)) {
                 (styles as any)[styleKey] = {
@@ -1117,9 +1105,6 @@ async function runPublishTaskAsync(
     siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
   }
   const computedSiteName = siteNameSuffix ? `${cleanArticleTitle} ${siteNameSuffix}` : cleanArticleTitle;
-  embedBlocks = embedBlocks.filter((block, index, all) =>
-    !!block.embedUrl && all.findIndex(candidate => candidate.embedUrl === block.embedUrl && candidate.embedPosition === block.embedPosition) === index
-  );
   const uniqueAnchorLinks = normalizeLinks(anchorLinks);
 
   try {
@@ -1132,7 +1117,6 @@ async function runPublishTaskAsync(
       fingerprint: fingerprintData ?? generateFingerprint(account.id),
       headless: true,
       timeout: 120000,
-      embedBlocks: embedBlocks.length > 0 ? embedBlocks : undefined,
       templateStyles,
       anchorLinks: uniqueAnchorLinks.length > 0 ? uniqueAnchorLinks : undefined,
       socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
@@ -1409,6 +1393,28 @@ const publisherRouter = router({
   }),
 });
 
+// Google Sites 浏览器自动化必须串行执行，避免多个浏览器会话争用同一账号 Cookie。
+let autoPublishChain: Promise<void> = Promise.resolve();
+
+function enqueueAutoPublish(
+  taskId: number,
+  task: { materialId: number | null; siteId: number | null; accountId: number; retryCount: number | null },
+  account: any,
+  material: any,
+) {
+  autoPublishChain = autoPublishChain
+    .catch(() => undefined)
+    .then(async () => {
+      await updatePublishTask(taskId, {
+        status: "running",
+        startedAt: new Date(),
+        engineLog: "[批量自动发布队列：正在启动浏览器...]",
+      });
+      await runPublishTaskAsync(taskId, task, account, material);
+    });
+  return autoPublishChain;
+}
+
 // ─── Batch Generation ──────────────────────────────────────────────────────────────────────────────
 // In-memory worker state
 const workerState: Record<number, { running: boolean; timer?: ReturnType<typeof setTimeout> }> = {};
@@ -1498,21 +1504,55 @@ ${insertHints}`;
       const rawContent = response.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent));
 
-      // Auto-approve based on threshold
-      const threshold = batch.autoApproveThreshold ?? 0;
-      const autoStatus = threshold > 0 && parsed.qualityScore >= threshold ? "approved" : "pending";
-
-      await createMaterial({
+      // 批量生成不再经过人工审核：生成成功即进入可发布状态。
+      const materialId = await createMaterial({
         title: item.title || parsed.title,
         keyword: item.keyword,
         language: batch.language,
         content: parsed.content,
         wordCount: parsed.wordCount,
         qualityScore: parsed.qualityScore,
-        status: autoStatus,
+        status: "approved",
         seoTemplateId: seoTemplateId ?? undefined,
         externalLinks: anchorLinks?.map(link => ({ anchorText: link.anchorText, url: link.url, position: link.position })),
       });
+
+      if (batch.autoQueue) {
+        const publishAccount = (await getAccounts()).find((account) =>
+          account.status === "online" && Array.isArray((account as any).cookieParsed) && (account as any).cookieParsed.length > 0,
+        );
+        if (!publishAccount) {
+          await createLog({
+            level: "warn",
+            category: "publish",
+            title: `自动发布未启动：${item.keyword}`,
+            message: "未找到状态正常且已保存 Cookie 的 Google 账号；文章已生成并保存为可发布状态。",
+            entityType: "batch",
+            entityId: batchId,
+          });
+        } else {
+          const taskId = await createPublishTask({
+            name: `自动发布：${item.title || parsed.title}`,
+            accountId: publishAccount.id,
+            materialId,
+            status: "pending",
+          });
+          await createLog({
+            level: "info",
+            category: "publish",
+            title: `自动发布任务已创建：${item.keyword}`,
+            message: `素材 #${materialId} 已跳过审核，已加入顺序发布队列（账号 #${publishAccount.id}）。`,
+            entityType: "task",
+            entityId: taskId,
+          });
+          void enqueueAutoPublish(
+            taskId,
+            { materialId, siteId: null, accountId: publishAccount.id, retryCount: 0 },
+            publishAccount,
+            { id: materialId, title: item.title || parsed.title, keyword: item.keyword, language: batch.language, content: parsed.content, wordCount: parsed.wordCount, qualityScore: parsed.qualityScore, seoTemplateId: seoTemplateId ?? null, internalLinks: [], externalLinks: anchorLinks ?? [] },
+          );
+        }
+      }
 
       await updateGenerationItem(item.id, {
         status: "completed",
@@ -1582,13 +1622,13 @@ const batchGenerationRouter = router({
     })).optional(),
     insertParagraph: z.string().optional(),
     autoApproveThreshold: z.number().min(0).max(100).default(0),
-    autoQueue: z.boolean().default(false),
+    autoQueue: z.boolean().default(true),
     templateId: z.number().optional(),
   })).mutation(async ({ input }) => {
     const { items, autoQueue, templateId, ...batchData } = input;
     await createGenerationBatch({
       ...batchData,
-      autoQueue: autoQueue ? 1 : 0,
+      autoQueue: 1,
       templateId: templateId ?? null,
       totalCount: items.length,
       status: "pending",
