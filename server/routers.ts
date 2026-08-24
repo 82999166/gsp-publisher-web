@@ -754,6 +754,7 @@ const settingsRouter = router({
     return {
       siteName: obj["site_name"] ?? "GSP Publisher",
       googleSiteNameSuffix: obj["google_site_name_suffix"] ?? "",
+      bannerTitleLinkUrl: obj["google_banner_title_link_url"] ?? "",
       siteDescription: obj["site_description"] ?? "",
       defaultLanguage: obj["default_language"] ?? "zh-CN",
       timezone: obj["timezone"] ?? "Asia/Shanghai",
@@ -787,6 +788,7 @@ const settingsRouter = router({
   update: protectedProcedure.input(z.object({
     siteName: z.string().optional(),
     googleSiteNameSuffix: z.string().optional(),
+    bannerTitleLinkUrl: z.string().optional(),
     siteDescription: z.string().optional(),
     defaultLanguage: z.string().optional(),
     timezone: z.string().optional(),
@@ -822,6 +824,7 @@ const settingsRouter = router({
     const mapping: Record<string, string | undefined> = {
       site_name: input.siteName,
       google_site_name_suffix: input.googleSiteNameSuffix,
+      google_banner_title_link_url: input.bannerTitleLinkUrl,
       site_description: input.siteDescription,
       default_language: input.defaultLanguage,
       timezone: input.timezone,
@@ -1043,6 +1046,7 @@ async function runPublishTaskAsync(
   };
   // 读取网站名称后缀、嵌入内容、版式和模板链接。
   let siteNameSuffix = "";
+  let bannerTitleLinkUrl = "";
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
   let templateStyles: {
     h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
@@ -1105,6 +1109,8 @@ async function runPublishTaskAsync(
     const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
     siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
   }
+  const bannerTitleLinkSetting = await getSettingByKey("google_banner_title_link_url");
+  bannerTitleLinkUrl = bannerTitleLinkSetting?.value?.trim() ?? "";
   const computedSiteName = siteNameSuffix ? `${cleanArticleTitle} ${siteNameSuffix}` : cleanArticleTitle;
   embedBlocks = embedBlocks.filter((block, index, all) =>
     !!block.embedUrl && all.findIndex(candidate => candidate.embedUrl === block.embedUrl && candidate.embedPosition === block.embedPosition) === index
@@ -1125,6 +1131,7 @@ async function runPublishTaskAsync(
       templateStyles,
       anchorLinks: uniqueAnchorLinks.length > 0 ? uniqueAnchorLinks : undefined,
       socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
+      bannerTitleLinkUrl: bannerTitleLinkUrl || undefined,
     });
     if (result.success) {
       await updatePublishTask(taskId, {

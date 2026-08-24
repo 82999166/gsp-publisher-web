@@ -107,6 +107,8 @@ export interface PublishOptions {
   anchorLinks?: Array<{ text: string; url: string; position?: string }>;
   /** 社交媒体链接（插入到文章底部） */
   socialLinks?: Array<{ label: string; url: string; type?: string }>;
+  /** Banner 标题点击后跳转的网址（来自系统发布配置） */
+  bannerTitleLinkUrl?: string;
 }
 
 export interface CookieEntry {
@@ -134,41 +136,84 @@ export interface PublishResult {
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
-/** 将 Markdown 内容转换为适合 Google Sites 的纯文本段落列表 */
-export function markdownToPlainSections(markdown: string): { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] {
+type GoogleSitesSection = {
+  type: "h1" | "h2" | "h3" | "p" | "ol" | "ul" | "embed";
+  text: string;
+  embedUrl?: string;
+  embedHeight?: number;
+};
+
+/** 仅接受可安全用于 Google Sites 的外部 HTTP(S) 跳转网址。 */
+export function normalizeExternalHttpUrl(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = new URL(trimmed);
+    return /^https?:$/.test(parsed.protocol) ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 将 Markdown 内容转换为适合 Google Sites 的标题、段落、列表和内嵌块。 */
+export function markdownToPlainSections(markdown: string): GoogleSitesSection[] {
   const lines = markdown.split("\n");
-  const sections: { type: "h1" | "h2" | "h3" | "p" | "embed"; text: string; embedUrl?: string; embedHeight?: number }[] = [];
+  const sections: GoogleSitesSection[] = [];
+  let paragraphLines: string[] = [];
+
+  const plainText = (value: string) => value
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`(.*?)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
+  const flushParagraph = () => {
+    const text = paragraphLines.map(plainText).filter(Boolean).join(" ").trim();
+    if (text) sections.push({ type: "p", text });
+    paragraphLines = [];
+  };
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      flushParagraph();
+      continue;
+    }
 
     if (trimmed.startsWith("### ")) {
-      sections.push({ type: "h3", text: trimmed.slice(4).trim() });
+      flushParagraph();
+      sections.push({ type: "h3", text: plainText(trimmed.slice(4)) });
     } else if (trimmed.startsWith("## ")) {
-      sections.push({ type: "h2", text: trimmed.slice(3).trim() });
+      flushParagraph();
+      sections.push({ type: "h2", text: plainText(trimmed.slice(3)) });
     } else if (trimmed.startsWith("# ")) {
-      sections.push({ type: "h1", text: trimmed.slice(2).trim() });
+      flushParagraph();
+      sections.push({ type: "h1", text: plainText(trimmed.slice(2)) });
     } else {
       if (trimmed.includes('<iframe')) {
         const srcMatch = trimmed.match(/src=["'](.*?)['"]/);
         const heightMatch = trimmed.match(/height=["'](\d+)['"]/);
         if (srcMatch && srcMatch[1]) {
+          flushParagraph();
           sections.push({ type: 'embed', text: '', embedUrl: srcMatch[1], embedHeight: parseInt(heightMatch?.[1] || '300') });
           continue;
         }
       }
-      const plain = trimmed
-        .replace(/\*\*(.*?)\*\*/g, "$1")
-        .replace(/\*(.*?)\*/g, "$1")
-        .replace(/`(.*?)`/g, "$1")
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-        .replace(/^[-*+]\s+/, "")
-        .replace(/^\d+\.\s+/, "");
-      if (plain && !plain.includes('<iframe')) sections.push({ type: "p", text: plain });
+      const ordered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+      const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
+      if (ordered) {
+        flushParagraph();
+        sections.push({ type: "ol", text: `${ordered[1]}. ${plainText(ordered[2])}` });
+      } else if (unordered) {
+        flushParagraph();
+        sections.push({ type: "ul", text: `• ${plainText(unordered[1])}` });
+      } else if (!trimmed.includes('<iframe')) {
+        paragraphLines.push(trimmed);
+      }
     }
   }
 
+  flushParagraph();
   return sections;
 }
 
@@ -435,6 +480,156 @@ export class GoogleSitesPublisher {
       }
       return { rendered: false, evidence: '未检测到 iframe、href、data-url 或 data-embed-url 证据' };
     }, { embedUrl, hostname });
+  }
+
+  /** 在 Google Sites Banner 标题上创建真实超链接，失败时仅记录日志而不影响文章发布。 */
+  private async applyBannerTitleLink(page: Page, title: string, configuredUrl?: string): Promise<void> {
+    const url = normalizeExternalHttpUrl(configuredUrl);
+    if (!configuredUrl) return;
+    if (!url) {
+      this.addLog(`⚠️ Banner 标题跳转链接格式无效，已跳过: ${configuredUrl}`);
+      return;
+    }
+
+    try {
+      const selected = await page.evaluate((headline) => {
+        const candidates = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]'))
+          .filter((element) => (element.textContent ?? '').trim().startsWith(headline));
+        const editable = candidates.sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))[0];
+        if (!editable) return false;
+        const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+        let offset = 0;
+        let startNode: Text | null = null;
+        let endNode: Text | null = null;
+        let endOffset = 0;
+        while (walker.nextNode()) {
+          const node = walker.currentNode as Text;
+          const length = node.textContent?.length ?? 0;
+          if (!startNode && offset + length >= headline.length) {
+            startNode = node;
+            endNode = node;
+            endOffset = headline.length;
+            break;
+          }
+          if (!startNode && length > 0) startNode = node;
+          if (startNode && offset + length >= headline.length) {
+            endNode = node;
+            endOffset = headline.length - offset;
+            break;
+          }
+          offset += length;
+        }
+        if (!startNode || !endNode) return false;
+        const range = document.createRange();
+        range.setStart(startNode, 0);
+        range.setEnd(endNode, Math.max(0, Math.min(endOffset, endNode.textContent?.length ?? 0)));
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return selection?.toString() === headline;
+      }, title);
+      if (!selected) {
+        this.addLog('⚠️ 未定位到 Banner 标题文本，无法添加跳转链接');
+        return;
+      }
+
+      await randomDelay(250, 450);
+      const toolbarLink = await page.evaluate(() => {
+        const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
+          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('data-tooltip') ?? ''} ${element.getAttribute('title') ?? ''}`.toLowerCase();
+          const rect = (element as HTMLElement).getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && /(^|\s)(insert )?link|链接/.test(label) && !/unlink|移除链接/.test(label);
+        }) as HTMLElement | undefined;
+        if (!candidate) return null;
+        const rect = candidate.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+      if (toolbarLink) {
+        await page.mouse.click(toolbarLink.x, toolbarLink.y);
+      } else {
+        await page.keyboard.down('Control');
+        await page.keyboard.press('k');
+        await page.keyboard.up('Control');
+      }
+
+      await page.waitForSelector('[role="dialog"] input', { timeout: 6000 });
+      const linkInput = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const input = Array.from(dialog?.querySelectorAll('input') ?? []).find((element) => {
+          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.trim();
+          const rect = (element as HTMLInputElement).getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && (/^link$/i.test(label) || /^链接$/i.test(label));
+        }) as HTMLInputElement | undefined;
+        if (!input) return null;
+        const rect = input.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+      if (!linkInput) {
+        this.addLog('⚠️ 标题跳转链接对话框中未找到 Link 输入框');
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return;
+      }
+
+      await page.mouse.click(linkInput.x, linkInput.y);
+      await page.keyboard.down('Control');
+      await page.keyboard.press('a');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type(url, { delay: 10 });
+      const linkWritten = await page.evaluate((expected) => {
+        const dialog = document.querySelector('[role="dialog"]');
+        return Array.from(dialog?.querySelectorAll('input') ?? []).some((input) => (input as HTMLInputElement).value.trim() === expected);
+      }, url);
+      if (!linkWritten) {
+        this.addLog('⚠️ Banner 标题跳转链接未写入输入框，已取消');
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return;
+      }
+      const applied = await this.clickDialogAction(page, ['应用', 'Apply']);
+      if (!applied) {
+        this.addLog('⚠️ 未找到标题跳转链接的 Apply 按钮');
+        await this.clickDialogAction(page, ['取消', 'Cancel']);
+        return;
+      }
+      await randomDelay(500, 900);
+      this.addLog(`✅ Banner 标题跳转链接已设置: ${url}`);
+    } catch (error) {
+      this.addLog(`⚠️ Banner 标题跳转链接设置失败: ${error instanceof Error ? error.message : String(error)}`);
+      try { await this.clickDialogAction(page, ['取消', 'Cancel']); } catch {}
+    }
+  }
+
+  /** 将内容按 Markdown 语义写入：标题加粗、段落留白、列表保持连续。 */
+  private async writeMarkdownSections(page: Page, sections: GoogleSitesSection[]): Promise<Array<{ embedUrl: string; embedHeight: number }>> {
+    const inlineEmbeds: Array<{ embedUrl: string; embedHeight: number }> = [];
+    for (let index = 0; index < sections.length; index++) {
+      const section = sections[index];
+      if (section.type === 'h1') continue;
+      if (section.type === 'embed') {
+        if (section.embedUrl) inlineEmbeds.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
+        continue;
+      }
+      const isHeading = section.type === 'h2' || section.type === 'h3';
+      const isList = section.type === 'ol' || section.type === 'ul';
+      const nextIsList = sections[index + 1]?.type === 'ol' || sections[index + 1]?.type === 'ul';
+      if (isHeading) {
+        await page.keyboard.down('Control');
+        await page.keyboard.press('b');
+        await page.keyboard.up('Control');
+      }
+      await page.keyboard.type(section.text, { delay: 8 });
+      if (isHeading) {
+        await page.keyboard.down('Control');
+        await page.keyboard.press('b');
+        await page.keyboard.up('Control');
+      }
+      await page.keyboard.press('Enter');
+      // Google Sites 将连续 Enter 写进同一个文本块。非连续列表额外插入空行，
+      // 让段落和小标题在发布页有清晰的视觉留白。
+      if (!isList || !nextIsList) await page.keyboard.press('Enter');
+      await randomDelay(10, 30);
+    }
+    return inlineEmbeds;
   }
 
   /** 将模板的 H1 字号映射到 Google Sites 支持的字号菜单。 */
@@ -789,7 +984,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks']): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -877,18 +1072,8 @@ export class GoogleSitesPublisher {
           await page.keyboard.press('Enter');
           await randomDelay(100, 200);
 
-          // 写入正文
-          const inlineEmbeds: Array<{ embedUrl: string; embedHeight: number }> = [];
-          for (const section of sections) {
-            if (section.type === 'h1') continue; // 标题已写入
-            if (section.type === 'embed') {
-              if (section.embedUrl) inlineEmbeds.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
-              continue;
-            }
-            await page.keyboard.type(section.text, { delay: 8 });
-            await page.keyboard.press('Enter');
-            await randomDelay(10, 30);
-          }
+          // 写入正文：标题、段落与列表按 Markdown 语义分别排版。
+          const inlineEmbeds = await this.writeMarkdownSections(page, sections);
 
           contentWritten = true;
           this.addLog(`✅ 内容写入成功（通过 ${sel}），标题: ${title}，段落数: ${sections.length}`);
@@ -922,17 +1107,7 @@ export class GoogleSitesPublisher {
 
           await page.keyboard.type(title, { delay: 15 });
           await page.keyboard.press('Enter');
-          const inlineEmbeds2: Array<{ embedUrl: string; embedHeight: number }> = [];
-          for (const section of sections) {
-            if (section.type === 'h1') continue;
-            if (section.type === 'embed') {
-              if (section.embedUrl) inlineEmbeds2.push({ embedUrl: section.embedUrl, embedHeight: section.embedHeight ?? 300 });
-              continue;
-            }
-            await page.keyboard.type(section.text, { delay: 8 });
-            await page.keyboard.press('Enter');
-            await randomDelay(10, 30);
-          }
+          const inlineEmbeds2 = await this.writeMarkdownSections(page, sections);
           contentWritten = true;
           this.addLog('✅ 内容写入成功（通过点击中央激活）');
           if (inlineEmbeds2.length > 0) {
@@ -951,6 +1126,7 @@ export class GoogleSitesPublisher {
 
     if (contentWritten) {
       await this.applyBannerTitleFontSize(page, title, templateStyles?.h1?.fontSize);
+      await this.applyBannerTitleLink(page, title, bannerTitleLinkUrl);
     }
 
     // ── 阶段2.5：填写网站名称（siteName）─────────────────────────────────────
@@ -1379,7 +1555,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl);
 
       this.addLog("发布任务完成！");
       return {
