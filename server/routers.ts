@@ -22,6 +22,7 @@ import {
   getPublishTaskById,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
+import { migrateLegacyTemplateEmbedBlocks } from "@shared/templateEmbedMigration";
 import { createGoogleOAuthHandler } from "./googleOAuth";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
@@ -882,10 +883,6 @@ const seoTemplatesRouter = router({
     minWords: z.number().default(800),
     maxWords: z.number().default(1500),
     siteNameSuffix: z.string().optional(),
-    embedUrl: z.string().optional(),
-    embedWidth: z.string().optional(),
-    embedHeight: z.string().optional(),
-    embedPosition: z.enum(["top", "bottom"]).optional(),
   })).mutation(async ({ input }) => {
     await createSeoTemplate({ ...input, isPreset: false, isActive: true });
     return { success: true };
@@ -901,13 +898,9 @@ const seoTemplatesRouter = router({
     maxWords: z.number().optional(),
     isActive: z.boolean().optional(),
     siteNameSuffix: z.string().optional(),
-    embedUrl: z.string().optional(),
-    embedWidth: z.string().optional(),
-    embedHeight: z.string().optional(),
-    embedPosition: z.enum(["top", "bottom"]).optional(),
   })).mutation(async ({ input }) => {
     const { id, ...data } = input;
-    await updateSeoTemplate(id, data);
+    await updateSeoTemplate(id, { ...data, embedUrl: null, embedWidth: null, embedHeight: null, embedPosition: null });
     return { success: true };
   }),
 
@@ -1073,25 +1066,23 @@ async function runPublishTaskAsync(
         if ((tpl as any).siteNameSuffix) {
           siteNameSuffix = ((tpl as any).siteNameSuffix as string).trim();
         }
-        // 读取模板级内嵌网站配置。
-        if ((tpl as any).embedUrl) {
-          embedBlocks.push({
-            embedUrl: (tpl as any).embedUrl as string,
-            embedWidth: ((tpl as any).embedWidth as string) || "100%",
-            embedHeight: ((tpl as any).embedHeight as string) || "600px",
-            embedPosition: ((tpl as any).embedPosition as string) || "bottom",
-          });
-        }
-        // 模板级配置和可视化板块结构可以同时存在，不能互相排斥。
-        if (tpl.structure) {
-          const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
-          if (Array.isArray(structure)) {
-            const structureEmbeds = (structure as any[]).filter((b: any) => b.type === 'embed' && b.embedUrl)
-              .map((b: any) => ({ embedUrl: b.embedUrl as string, embedHeight: b.embedHeight as string | undefined }));
+        // 旧模板级嵌入配置兼容迁移到唯一的“内嵌网站”版块。
+        const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
+        const normalizedBlocks = migrateLegacyTemplateEmbedBlocks(structure, {
+          templateId: tpl.id,
+          embedUrl: (tpl as any).embedUrl,
+          embedWidth: (tpl as any).embedWidth,
+          embedHeight: (tpl as any).embedHeight,
+          embedPosition: (tpl as any).embedPosition,
+        });
+
+        if (normalizedBlocks.length > 0) {
+            const structureEmbeds = normalizedBlocks.filter((b: any) => b.type === 'embed' && b.embedUrl)
+              .map((b: any) => ({ embedUrl: b.embedUrl as string, embedWidth: b.embedWidth as string | undefined, embedHeight: b.embedHeight as string | undefined, embedPosition: b.embedPosition as string | undefined }));
             embedBlocks.push(...structureEmbeds);
             const styles: NonNullable<typeof templateStyles> = {};
-            for (const block of structure as any[]) {
-              const styleKey = block.type === "paragraph" ? "p" : block.type;
+            for (const block of normalizedBlocks) {
+              const styleKey = block.type === "paragraph" ? "p" : (block.type ?? "");
               if (["h1", "h2", "h3", "p"].includes(styleKey) && (block.fontSize || block.fontWeight || block.textAlign)) {
                 (styles as any)[styleKey] = {
                   fontSize: block.fontSize,
@@ -1102,7 +1093,6 @@ async function runPublishTaskAsync(
               if (block.type === "links") anchorLinks.push(...normalizeLinks(block.linkItems));
             }
             if (Object.keys(styles).length > 0) templateStyles = styles;
-          }
         }
       }
     } catch (e) {

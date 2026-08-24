@@ -522,7 +522,11 @@ export class GoogleSitesPublisher {
         return;
       }
       await page.mouse.click(urlInputTarget.x, urlInputTarget.y);
-      await page.keyboard.press('Control+A');
+      // Puppeteer 的 KeyInput 不支持 "Control+A" 这样的组合字符串；必须拆分
+      // 修饰键和字符键，否则会抛出 Unknown key 并中断整个内嵌流程。
+      await page.keyboard.down('Control');
+      await page.keyboard.press('A');
+      await page.keyboard.up('Control');
       await page.keyboard.type(embedUrl, { delay: 8 });
       // Tab 会触发 Google Sites 对 URL 的预览请求；没有这一步通用网站卡片不会生成。
       await page.keyboard.press('Tab');

@@ -88,18 +88,45 @@ function getBlockTypeInfo(type: BlockType) {
   return BLOCK_TYPES.find(b => b.type === type) ?? BLOCK_TYPES[0];
 }
 
+/** 将旧模板级 embedUrl 无缝迁移到唯一的“内嵌网站”版块，避免用户重复配置。 */
+function getMigratedBlocks(template: any): TemplateBlock[] {
+  const structure = template.structure;
+  const saved = Array.isArray(structure) ? structure : (structure?.blocks ?? []);
+  const blocks = (saved as TemplateBlock[]).map(block => ({ ...block }));
+  const legacyUrl = typeof template.embedUrl === "string" ? template.embedUrl.trim() : "";
+  if (!legacyUrl) return blocks;
+
+  if (blocks.some(block => block.type === "embed" && !!block.embedUrl?.trim())) return blocks;
+
+  const emptyEmbed = blocks.find(block => block.type === "embed" && !block.embedUrl);
+  if (emptyEmbed) {
+    emptyEmbed.embedUrl = legacyUrl;
+    emptyEmbed.embedWidth ||= template.embedWidth || "100%";
+    emptyEmbed.embedHeight ||= Number(template.embedHeight) || 300;
+    emptyEmbed.embedPosition ||= template.embedPosition || "bottom";
+  } else if (!blocks.some(block => block.type === "embed" && block.embedUrl === legacyUrl)) {
+    blocks.push({
+      id: `legacy-embed-${template.id}`,
+      type: "embed",
+      title: "内嵌网站",
+      contentHint: "",
+      embedUrl: legacyUrl,
+      embedWidth: template.embedWidth || "100%",
+      embedHeight: Number(template.embedHeight) || 300,
+      embedPosition: template.embedPosition || "bottom",
+    });
+  }
+  return blocks;
+}
+
 // ─── 直观页面预览组件 ─────────────────────────────────────────────────────────
-function PagePreview({ blocks, siteNameSuffix, embedUrl, embedWidth, embedHeight, embedPosition }: {
+function PagePreview({ blocks, siteNameSuffix }: {
   blocks: TemplateBlock[];
   siteNameSuffix?: string;
-  embedUrl?: string;
-  embedWidth?: string;
-  embedHeight?: string;
-  embedPosition?: string;
 }) {
   const [previewKeyword] = useState("示例关键词");
 
-  if (blocks.length === 0 && !embedUrl) {
+  if (blocks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm">
         <LayoutTemplate className="h-12 w-12 mb-3 opacity-20" />
@@ -110,10 +137,7 @@ function PagePreview({ blocks, siteNameSuffix, embedUrl, embedWidth, embedHeight
   }
 
   const siteName = siteNameSuffix ? `${previewKeyword} ${siteNameSuffix}` : previewKeyword;
-  const embedH = parseInt(embedHeight || "300") || 300;
-  const embedW = embedWidth || "100%";
-
-  // 构建预览内容（包含模板级别的内嵌网站）
+  // 构建预览内容（每一个内嵌网站都来自对应的版块配置）
   const renderEmbedBlock = (url: string, w: string, h: number, label?: string) => (
     <div className="rounded-lg overflow-hidden border border-cyan-200 bg-cyan-50/30">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-100/50 border-b border-cyan-200">
@@ -160,9 +184,6 @@ function PagePreview({ blocks, siteNameSuffix, embedUrl, embedWidth, embedHeight
 
         {/* 文章内容区 */}
         <div className="p-4 space-y-3 text-sm">
-          {/* 模板级别内嵌网站 - 顶部 */}
-          {embedUrl && (embedPosition === "top" || !embedPosition) && renderEmbedBlock(embedUrl, embedW, embedH, "模板内嵌网站（顶部）")}
-
           {blocks.map((block) => {
             const info = getBlockTypeInfo(block.type);
             const fsMap: Record<string, string> = { sm: "11px", base: "13px", lg: "15px", xl: "17px", "2xl": "20px" };
@@ -261,9 +282,6 @@ function PagePreview({ blocks, siteNameSuffix, embedUrl, embedWidth, embedHeight
             );
             return null;
           })}
-
-          {/* 模板级别内嵌网站 - 底部 */}
-          {embedUrl && embedPosition === "bottom" && renderEmbedBlock(embedUrl, embedW, embedH, "模板内嵌网站（底部）")}
         </div>
       </div>
     </div>
@@ -559,7 +577,7 @@ export default function SeoTemplates() {
   const [editorForm, setEditorForm] = useState({
     name: "", type: "informational", description: "", promptTemplate: "",
     minWords: 800, maxWords: 1200,
-    siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom",
+    siteNameSuffix: "",
   });
   const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
   const [previewMode, setPreviewMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
@@ -569,18 +587,16 @@ export default function SeoTemplates() {
   function openCreate() {
     setEditingTemplate(null);
     setBlocks([]);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", embedUrl: "", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom" });
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "" });
     setShowEditor(true);
   }
   function openEdit(tpl: any) {
     setEditingTemplate(tpl);
-    setBlocks((tpl.structure?.blocks ?? []) as TemplateBlock[]);
+    setBlocks(getMigratedBlocks(tpl));
     setEditorForm({
       name: tpl.name, type: tpl.type, description: tpl.description ?? "",
       promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1200,
-      siteNameSuffix: tpl.siteNameSuffix ?? "", embedUrl: tpl.embedUrl ?? "",
-      embedWidth: tpl.embedWidth ?? "100%", embedHeight: tpl.embedHeight ?? "300",
-      embedPosition: tpl.embedPosition ?? "bottom",
+      siteNameSuffix: tpl.siteNameSuffix ?? "",
     });
     setShowEditor(true);
   }
@@ -645,10 +661,6 @@ export default function SeoTemplates() {
       name: editorForm.name, description: editorForm.description || undefined,
       promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure,
       siteNameSuffix: editorForm.siteNameSuffix || undefined,
-      embedUrl: editorForm.embedUrl || undefined,
-      embedWidth: editorForm.embedWidth || undefined,
-      embedHeight: editorForm.embedHeight || undefined,
-      embedPosition: (editorForm.embedPosition as any) || undefined,
     };
     if (editingTemplate) {
       updateMut.mutate({ id: editingTemplate.id, ...payload });
@@ -679,7 +691,7 @@ export default function SeoTemplates() {
         {(templates as any[]).map((tpl: any) => {
           const typeInfo = getTypeInfo(tpl.type);
           const Icon = typeInfo.icon;
-          const savedBlocks: TemplateBlock[] = tpl.structure?.blocks ?? [];
+          const savedBlocks = getMigratedBlocks(tpl);
           return (
             <Card key={tpl.id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-3">
@@ -715,10 +727,9 @@ export default function SeoTemplates() {
                   </div>
                 )}
                 {/* 发布设置标签 */}
-                {(tpl.siteNameSuffix || tpl.embedUrl) && (
+                {tpl.siteNameSuffix && (
                   <div className="flex flex-wrap gap-1">
                     {tpl.siteNameSuffix && <span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200">后缀: {tpl.siteNameSuffix}</span>}
-                    {tpl.embedUrl && <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600 border border-cyan-200">内嵌网站</span>}
                   </div>
                 )}
                 <div className="flex gap-2 pt-1">
@@ -892,37 +903,9 @@ export default function SeoTemplates() {
                     />
                     <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">模板内嵌网站 URL</Label>
-                    <Input
-                      className="h-8 text-sm"
-                      placeholder="https://example.com（留空则不嵌入）"
-                      value={editorForm.embedUrl}
-                      onChange={e => setEditorForm(f => ({ ...f, embedUrl: e.target.value }))}
-                    />
-                  </div>
-                  {editorForm.embedUrl && (
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">宽度</Label>
-                        <Input className="h-8 text-sm" placeholder="100%" value={editorForm.embedWidth} onChange={e => setEditorForm(f => ({ ...f, embedWidth: e.target.value }))} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">高度 (px)</Label>
-                        <Input type="number" className="h-8 text-sm" min={100} max={2000} value={editorForm.embedHeight} onChange={e => setEditorForm(f => ({ ...f, embedHeight: e.target.value }))} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">嵌入位置</Label>
-                        <Select value={editorForm.embedPosition} onValueChange={v => setEditorForm(f => ({ ...f, embedPosition: v }))}>
-                          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                          <SelectContent className="z-[99999]">
-                            <SelectItem value="top">文章顶部</SelectItem>
-                            <SelectItem value="bottom">文章底部</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  )}
+                  <p className="text-xs text-muted-foreground rounded-md bg-muted/60 px-3 py-2">
+                    内嵌网站请在上方「板块顺序与设置」中选择“内嵌网站”并点击编辑图标填写 URL、尺寸和位置。
+                  </p>
                 </div>
               </div>
             </div>
@@ -940,10 +923,6 @@ export default function SeoTemplates() {
                   <PagePreview
                     blocks={blocks}
                     siteNameSuffix={editorForm.siteNameSuffix}
-                    embedUrl={editorForm.embedUrl}
-                    embedWidth={editorForm.embedWidth}
-                    embedHeight={editorForm.embedHeight}
-                    embedPosition={editorForm.embedPosition}
                   />
                 </div>
               </div>
