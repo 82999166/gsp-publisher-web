@@ -484,6 +484,36 @@ export class GoogleSitesPublisher {
     }, { embedUrl, hostname });
   }
 
+  /** 输出当前编辑器交互状态，便于定位 Google Sites 菜单或对话框未出现的真实原因。 */
+  private async logEditorInteractionState(page: Page, stage: string): Promise<void> {
+    try {
+      const state = await page.evaluate(() => {
+        const active = document.activeElement as HTMLElement | null;
+        const selection = window.getSelection()?.toString() ?? '';
+        const dialog = document.querySelector('[role="dialog"]');
+        const controls = Array.from(document.querySelectorAll('button, [role="button"]'))
+          .filter((element) => {
+            const rect = (element as HTMLElement).getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          })
+          .map((element) => ({
+            text: (element.textContent ?? '').trim().slice(0, 50),
+            ariaLabel: element.getAttribute('aria-label') ?? '',
+            title: element.getAttribute('title') ?? '',
+          }))
+          .filter((control) => /link|链接|insert|插入|embed|嵌入/i.test(`${control.text} ${control.ariaLabel} ${control.title}`))
+          .slice(0, 16);
+        return {
+          active: active ? { tag: active.tagName, role: active.getAttribute('role') ?? '', ariaLabel: active.getAttribute('aria-label') ?? '' } : null,
+          selection: selection.slice(0, 120),
+          dialogText: (dialog?.textContent ?? '').trim().slice(0, 240),
+          controls,
+        };
+      });
+      this.addLog(`交互状态（${stage}）: ${JSON.stringify(state)}`);
+    } catch {}
+  }
+
   /** 在 Google Sites Banner 标题上创建真实超链接，失败时仅记录日志而不影响文章发布。 */
   private async applyBannerTitleLink(page: Page, title: string, configuredUrl?: string): Promise<void> {
     const url = normalizeExternalHttpUrl(configuredUrl);
@@ -494,7 +524,29 @@ export class GoogleSitesPublisher {
     }
 
     try {
-      const selected = await page.evaluate((headline) => {
+      const titleTarget = await page.evaluate((headline) => {
+        const editable = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]'))
+          .filter((element) => (element.textContent ?? '').trim().startsWith(headline))
+          .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))[0] as HTMLElement | undefined;
+        if (!editable) return null;
+        const rect = editable.getBoundingClientRect();
+        return { x: rect.left + Math.min(48, rect.width / 2), y: rect.top + Math.min(32, rect.height / 2) };
+      }, title);
+      if (!titleTarget) {
+        this.addLog('⚠️ 未定位到 Banner 标题文本，无法添加跳转链接');
+        return;
+      }
+      // Google Sites 对 document.getSelection() 的响应并不稳定。优先以真实点击和键盘选中标题首行。
+      await page.mouse.click(titleTarget.x, titleTarget.y);
+      await page.keyboard.down('Control');
+      await page.keyboard.press('Home');
+      await page.keyboard.up('Control');
+      await page.keyboard.down('Shift');
+      await page.keyboard.press('End');
+      await page.keyboard.up('Shift');
+      let selected = await page.evaluate((headline) => window.getSelection()?.toString() === headline, title);
+      if (!selected) {
+        selected = await page.evaluate((headline) => {
         const candidates = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]'))
           .filter((element) => (element.textContent ?? '').trim().startsWith(headline));
         const editable = candidates.sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))[0];
@@ -529,14 +581,23 @@ export class GoogleSitesPublisher {
         selection?.removeAllRanges();
         selection?.addRange(range);
         return selection?.toString() === headline;
-      }, title);
+        }, title);
+      }
       if (!selected) {
         this.addLog('⚠️ 未定位到 Banner 标题文本，无法添加跳转链接');
+        await this.logEditorInteractionState(page, '标题选择失败');
         return;
       }
 
       await randomDelay(250, 450);
-      const toolbarLink = await page.evaluate(() => {
+      // 首先使用 Google Sites 的标准快捷键，避免误点到页面其他同名 Link 控件。
+      await page.keyboard.down('Control');
+      await page.keyboard.press('k');
+      await page.keyboard.up('Control');
+      try {
+        await page.waitForSelector('[role="dialog"] input', { timeout: 2500 });
+      } catch {
+        const toolbarLink = await page.evaluate(() => {
         const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
           const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('data-tooltip') ?? ''} ${element.getAttribute('title') ?? ''}`.toLowerCase();
           const rect = (element as HTMLElement).getBoundingClientRect();
@@ -545,13 +606,8 @@ export class GoogleSitesPublisher {
         if (!candidate) return null;
         const rect = candidate.getBoundingClientRect();
         return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      });
-      if (toolbarLink) {
-        await page.mouse.click(toolbarLink.x, toolbarLink.y);
-      } else {
-        await page.keyboard.down('Control');
-        await page.keyboard.press('k');
-        await page.keyboard.up('Control');
+        });
+        if (toolbarLink) await page.mouse.click(toolbarLink.x, toolbarLink.y);
       }
 
       await page.waitForSelector('[role="dialog"] input', { timeout: 6000 });
@@ -597,6 +653,7 @@ export class GoogleSitesPublisher {
       this.addLog(`✅ Banner 标题跳转链接已设置: ${url}`);
     } catch (error) {
       this.addLog(`⚠️ Banner 标题跳转链接设置失败: ${error instanceof Error ? error.message : String(error)}`);
+      await this.logEditorInteractionState(page, '标题跳转失败');
       try { await this.clickDialogAction(page, ['取消', 'Cancel']); } catch {}
     }
   }
@@ -700,8 +757,18 @@ export class GoogleSitesPublisher {
     this.addLog(`检测到嵌入类型: ${embedType}`);
     
     try {
-      // 点击内容区末尾，确保光标在内容区
+      // 重新聚焦文章文本框末尾，避免上一项交互（如标题链接）遗留选择状态影响插入菜单。
+      const editorTarget = await page.evaluate(() => {
+        const editable = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]'))
+          .sort((a, b) => (b.textContent?.length ?? 0) - (a.textContent?.length ?? 0))[0] as HTMLElement | undefined;
+        if (!editable) return null;
+        const rect = editable.getBoundingClientRect();
+        return { x: rect.left + Math.min(80, rect.width / 2), y: rect.top + Math.min(36, rect.height / 2) };
+      });
+      if (editorTarget) await page.mouse.click(editorTarget.x, editorTarget.y);
+      await page.keyboard.down('Control');
       await page.keyboard.press('End');
+      await page.keyboard.up('Control');
       await randomDelay(300, 500);
 
       // Google Sites 的首次菜单点击偶尔会命中旧控件。只在真正的 URL 对话框出现后
@@ -754,6 +821,7 @@ export class GoogleSitesPublisher {
           this.addLog(`内嵌 URL 对话框已出现: ${JSON.stringify(dialogType)}`);
         } catch {
           this.addLog(`⚠️ 第 ${attempt} 次点击后未出现内嵌 URL 对话框`);
+          await this.logEditorInteractionState(page, `内嵌对话框未出现（第 ${attempt} 次）`);
           await page.keyboard.press('Escape');
           await randomDelay(400, 650);
         }
@@ -1132,7 +1200,6 @@ export class GoogleSitesPublisher {
 
     if (contentWritten) {
       await this.applyBannerTitleFontSize(page, title, templateStyles?.h1?.fontSize);
-      await this.applyBannerTitleLink(page, title, bannerTitleLinkUrl);
     }
 
     // ── 阶段2.5：填写网站名称（siteName）─────────────────────────────────────
@@ -1297,6 +1364,11 @@ export class GoogleSitesPublisher {
       await randomDelay(800, 1000);
     } else {
       this.addLog('✅ 嵌入类弹窗已关闭，可安全执行发布流程');
+    }
+
+    // 内嵌菜单对当前编辑器焦点敏感。待所有嵌入操作结束且残留对话框关闭后，再设置 Banner 标题链接。
+    if (contentWritten && bannerTitleLinkUrl) {
+      await this.applyBannerTitleLink(page, title, bannerTitleLinkUrl);
     }
 
     // ── 阶段3.6：应用样式设置（如果有）─────────────────────────────────────
