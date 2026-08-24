@@ -523,7 +523,7 @@ export class GoogleSitesPublisher {
         const embedMenuClicked = await this.clickVisibleText(
           page,
           [menuItemText, menuItemText === '嵌入' ? 'Embed' : menuItemText],
-          '[role="menuitem"], [role="button"], [role="option"]',
+          '[role="menu"] [role="menuitem"], [role="menuitem"]',
         );
         if (!embedMenuClicked) {
           this.addLog(`⚠️ 第 ${attempt} 次未找到 ${menuItemText} 菜单项`);
@@ -533,8 +533,28 @@ export class GoogleSitesPublisher {
         this.addLog(`已点击菜单项: ${embedMenuClicked}`);
         try {
           await page.waitForSelector('[role="dialog"] input, [role="dialog"] textarea', { timeout: 8000 });
+          const dialogType = await page.evaluate(() => {
+            const dialog = document.querySelector('[role="dialog"]');
+            const inputs = Array.from(dialog?.querySelectorAll('input, textarea') || []) as Array<HTMLInputElement | HTMLTextAreaElement>;
+            const labels = inputs.map((input) => `${input.getAttribute('aria-label') ?? ''} ${input.getAttribute('placeholder') ?? ''}`.trim());
+            const normalized = labels.join(' ').toLowerCase();
+            const hasLinkField = labels.some((label) => /^link$/i.test(label.trim()) || /^链接$/i.test(label.trim()));
+            const hasTextField = labels.some((label) => /^text$/i.test(label.trim()) || /^文本$/i.test(label.trim()));
+            const hasEmbedHint = /paste.*(url|link)|embed|by url|website|通过网址|嵌入网站/.test(normalized);
+            return {
+              labels,
+              text: (dialog?.textContent ?? '').trim().slice(0, 300),
+              isHyperlinkDialog: hasLinkField && hasTextField && !hasEmbedHint,
+            };
+          });
+          if (dialogType.isHyperlinkDialog) {
+            this.addLog(`⚠️ 误打开超链接对话框（Link + Text），已取消并重试真实嵌入入口: ${JSON.stringify(dialogType)}`);
+            await this.clickDialogAction(page, ['取消', 'Cancel']);
+            await randomDelay(500, 800);
+            continue;
+          }
           dialogOpened = true;
-          this.addLog('内嵌 URL 对话框已出现');
+          this.addLog(`内嵌 URL 对话框已出现: ${JSON.stringify(dialogType)}`);
         } catch {
           this.addLog(`⚠️ 第 ${attempt} 次点击后未出现内嵌 URL 对话框`);
           await page.keyboard.press('Escape');
