@@ -17,6 +17,7 @@ export type LegacyEmbedSettings = {
 
 export type TemplatePublishSettings = {
   bannerTitleLinkUrl?: string;
+  articleContentLinkUrl?: string;
   autoFormatContent: boolean;
 };
 
@@ -26,10 +27,11 @@ export function getTemplatePublishSettings(structure: unknown): TemplatePublishS
     ? structure as { publish?: unknown }
     : null;
   const publish = root?.publish && typeof root.publish === "object" && !Array.isArray(root.publish)
-    ? root.publish as { bannerTitleLinkUrl?: unknown; autoFormatContent?: unknown }
+    ? root.publish as { bannerTitleLinkUrl?: unknown; articleContentLinkUrl?: unknown; autoFormatContent?: unknown }
     : null;
   return {
     bannerTitleLinkUrl: typeof publish?.bannerTitleLinkUrl === "string" ? publish.bannerTitleLinkUrl.trim() || undefined : undefined,
+    articleContentLinkUrl: typeof publish?.articleContentLinkUrl === "string" ? publish.articleContentLinkUrl.trim() || undefined : undefined,
     autoFormatContent: publish?.autoFormatContent !== false,
   };
 }

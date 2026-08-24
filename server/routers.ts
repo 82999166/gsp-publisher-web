@@ -1048,6 +1048,7 @@ async function runPublishTaskAsync(
   // 读取网站名称后缀、嵌入内容、版式和模板链接。
   let siteNameSuffix = "";
   let bannerTitleLinkUrl = "";
+  let articleContentLinkUrl = "";
   let autoFormatContent = true;
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
   let templateStyles: {
@@ -1076,6 +1077,7 @@ async function runPublishTaskAsync(
         const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
         const templatePublishSettings = getTemplatePublishSettings(structure);
         bannerTitleLinkUrl = templatePublishSettings.bannerTitleLinkUrl ?? "";
+        articleContentLinkUrl = templatePublishSettings.articleContentLinkUrl ?? "";
         autoFormatContent = templatePublishSettings.autoFormatContent;
         const normalizedBlocks = migrateLegacyTemplateEmbedBlocks(structure, {
           templateId: tpl.id,
@@ -1135,6 +1137,7 @@ async function runPublishTaskAsync(
       anchorLinks: uniqueAnchorLinks.length > 0 ? uniqueAnchorLinks : undefined,
       socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
       bannerTitleLinkUrl: bannerTitleLinkUrl || undefined,
+      articleContentLinkUrl: articleContentLinkUrl || undefined,
       autoFormatContent,
     });
     if (result.success) {

@@ -580,6 +580,7 @@ export default function SeoTemplates() {
     minWords: 800, maxWords: 1200,
     siteNameSuffix: "",
     bannerTitleLinkUrl: "",
+    articleContentLinkUrl: "",
     autoFormatContent: true,
   });
   const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
@@ -590,7 +591,7 @@ export default function SeoTemplates() {
   function openCreate() {
     setEditingTemplate(null);
     setBlocks([]);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", bannerTitleLinkUrl: "", autoFormatContent: true });
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", bannerTitleLinkUrl: "", articleContentLinkUrl: "", autoFormatContent: true });
     setShowEditor(true);
   }
   function openEdit(tpl: any) {
@@ -602,6 +603,7 @@ export default function SeoTemplates() {
       promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1200,
       siteNameSuffix: tpl.siteNameSuffix ?? "",
       bannerTitleLinkUrl: publishSettings.bannerTitleLinkUrl ?? "",
+      articleContentLinkUrl: publishSettings.articleContentLinkUrl ?? "",
       autoFormatContent: publishSettings.autoFormatContent,
     });
     setShowEditor(true);
@@ -665,6 +667,7 @@ export default function SeoTemplates() {
       blocks,
       publish: {
         bannerTitleLinkUrl: editorForm.bannerTitleLinkUrl.trim() || undefined,
+        articleContentLinkUrl: editorForm.articleContentLinkUrl.trim() || undefined,
         autoFormatContent: editorForm.autoFormatContent,
       },
     };
@@ -739,9 +742,10 @@ export default function SeoTemplates() {
                   </div>
                 )}
                 {/* 发布设置标签 */}
-                {(tpl.siteNameSuffix || publishSettings.bannerTitleLinkUrl || !publishSettings.autoFormatContent) && (
+                {(tpl.siteNameSuffix || publishSettings.bannerTitleLinkUrl || publishSettings.articleContentLinkUrl || !publishSettings.autoFormatContent) && (
                   <div className="flex flex-wrap gap-1">
                     {tpl.siteNameSuffix && <span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200">后缀: {tpl.siteNameSuffix}</span>}
+                    {publishSettings.articleContentLinkUrl && <span className="text-xs px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 border border-violet-200">全文跳转</span>}
                     {publishSettings.bannerTitleLinkUrl && <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200">标题跳转</span>}
                     {!publishSettings.autoFormatContent && <span className="text-xs px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">保留原始排版</span>}
                   </div>
@@ -927,6 +931,17 @@ export default function SeoTemplates() {
                       onChange={e => setEditorForm(f => ({ ...f, bannerTitleLinkUrl: e.target.value }))}
                     />
                     <p className="text-xs text-muted-foreground">该模板生成并发布的页面，顶部 Banner 标题可点击跳转到此网址。</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">标题与正文统一跳转链接（可选）</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      type="url"
+                      placeholder="https://example.com"
+                      value={editorForm.articleContentLinkUrl}
+                      onChange={e => setEditorForm(f => ({ ...f, articleContentLinkUrl: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">填写后，发布页的标题、小标题和正文文字均跳转至该网址；该设置优先于“Banner 标题跳转链接”。</p>
                   </div>
                   <label className="flex items-start gap-2.5 rounded-md border border-border bg-muted/30 px-3 py-2.5 cursor-pointer">
                     <Checkbox

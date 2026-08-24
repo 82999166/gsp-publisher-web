@@ -115,6 +115,8 @@ export interface PublishOptions {
   socialLinks?: Array<{ label: string; url: string; type?: string }>;
   /** Banner 标题点击后跳转的网址（来自系统发布配置） */
   bannerTitleLinkUrl?: string;
+  /** 标题、各级小标题与正文文字统一跳转的网址（优先于 Banner 单独跳转） */
+  articleContentLinkUrl?: string;
   /** 是否按 Markdown 的标题、段落和列表语义进行自动排版（默认启用） */
   autoFormatContent?: boolean;
 }
@@ -677,6 +679,40 @@ export class GoogleSitesPublisher {
     }
   }
 
+  /** 将文章文本框中的标题、各级小标题和正文统一写成真实可点击链接。 */
+  private async applyArticleContentLink(page: Page, configuredUrl?: string): Promise<void> {
+    const url = normalizeExternalHttpUrl(configuredUrl);
+    if (!configuredUrl) return;
+    if (!url) {
+      this.addLog(`⚠️ 标题与正文统一跳转链接格式无效，已跳过: ${configuredUrl}`);
+      return;
+    }
+    const target = await page.evaluate(() => {
+      const editable = Array.from(document.querySelectorAll('[role="textbox"], [contenteditable="true"], [contenteditable="plaintext-only"]'))
+        .filter((element) => (element.textContent ?? '').trim().length > 0)
+        .sort((a, b) => (b.textContent?.length ?? 0) - (a.textContent?.length ?? 0))[0] as HTMLElement | undefined;
+      if (!editable) return null;
+      const rect = editable.getBoundingClientRect();
+      return { x: rect.left + Math.min(80, rect.width / 2), y: rect.top + Math.min(36, rect.height / 2) };
+    });
+    if (!target) {
+      this.addLog('⚠️ 未定位到文章正文文本框，无法设置标题与正文统一跳转链接');
+      return;
+    }
+    await page.mouse.click(target.x, target.y);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('a');
+    await page.keyboard.up('Control');
+    const selectedLength = await page.evaluate(() => window.getSelection()?.toString().trim().length ?? 0);
+    if (selectedLength === 0) {
+      this.addLog('⚠️ 未能选中标题与正文文字，无法设置统一跳转链接');
+      await this.logEditorInteractionState(page, '全文链接选择失败');
+      return;
+    }
+    this.addLog(`正在将 ${selectedLength} 个字符的标题与正文设置为统一跳转链接...`);
+    await this.applySelectedTextLink(page, url, '标题与正文统一');
+  }
+
   /** 将内容按 Markdown 语义写入：标题加粗、段落留白、列表保持连续。 */
   private async writeMarkdownSections(page: Page, sections: GoogleSitesSection[]): Promise<Array<{ embedUrl: string; embedHeight: number }>> {
     const inlineEmbeds: Array<{ embedUrl: string; embedHeight: number }> = [];
@@ -1073,7 +1109,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string, autoFormatContent = true): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string, articleContentLinkUrl?: string, autoFormatContent = true): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -1396,7 +1432,9 @@ export class GoogleSitesPublisher {
     }
 
     // 内嵌菜单对当前编辑器焦点敏感。待所有嵌入操作结束且残留对话框关闭后，再设置 Banner 标题链接。
-    if (contentWritten && bannerTitleLinkUrl) {
+    if (contentWritten && articleContentLinkUrl) {
+      await this.applyArticleContentLink(page, articleContentLinkUrl);
+    } else if (contentWritten && bannerTitleLinkUrl) {
       await this.applyBannerTitleLink(page, title, bannerTitleLinkUrl);
     }
 
@@ -1662,7 +1700,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl, options.autoFormatContent !== false);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl, options.articleContentLinkUrl, options.autoFormatContent !== false);
 
       this.addLog("发布任务完成！");
       return {
