@@ -389,6 +389,28 @@ export class GoogleSitesPublisher {
     return target.text || texts[0];
   }
 
+  /** 在当前 Google Sites 弹窗内精确点击指定动作，避免命中页面或嵌套的同名控件。 */
+  private async clickDialogAction(page: Page, texts: string[]): Promise<string | null> {
+    const target = await page.evaluate((labels) => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog) return null;
+      const expected = labels.map(label => label.trim().toLowerCase());
+      const candidates = Array.from(dialog.querySelectorAll('button, [role="button"]')) as HTMLElement[];
+      const action = candidates.find((candidate) => {
+        const text = `${candidate.textContent ?? ''} ${candidate.getAttribute('aria-label') ?? ''}`.trim().toLowerCase();
+        const rect = candidate.getBoundingClientRect();
+        const disabled = (candidate as HTMLButtonElement).disabled || candidate.getAttribute('aria-disabled') === 'true';
+        return !disabled && rect.width > 0 && rect.height > 0 && expected.some(label => text === label || text.includes(label));
+      });
+      if (!action) return null;
+      const rect = action.getBoundingClientRect();
+      return { text: (action.textContent ?? action.getAttribute('aria-label') ?? '').trim(), x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }, texts);
+    if (!target) return null;
+    await page.mouse.click(target.x, target.y);
+    return target.text || texts[0];
+  }
+
   /** 将模板的 H1 字号映射到 Google Sites 支持的字号菜单。 */
   private async applyBannerTitleFontSize(page: Page, title: string, templateSize?: string): Promise<void> {
     // Google Sites 的 Banner 默认字号为 64，过大；将模板语义字号映射为其菜单中的可选值。
@@ -533,6 +555,16 @@ export class GoogleSitesPublisher {
       this.addLog(`已填入 URL 并触发预览: ${embedUrl}`);
       await randomDelay(1800, 2500);
 
+      // 部分 Google Sites 版本仅在 Enter 后真正加载预览卡片。
+      const previewAction = await this.clickDialogAction(page, ['下一步', 'Next', '预览', 'Preview']);
+      if (previewAction) {
+        this.addLog(`已点击预览动作: ${previewAction}`);
+      } else {
+        await page.keyboard.press('Enter');
+        this.addLog('未发现预览动作，已按 Enter 触发预览');
+      }
+      await randomDelay(2500, 3500);
+
       if (embedType === 'generic') {
         const fullPageCard = await page.evaluate(() => {
           const texts = ['整个页面', 'Entire page'];
@@ -555,9 +587,8 @@ export class GoogleSitesPublisher {
         }
       }
 
-      // 点击"下一步"或"预览"或"插入"按鈕
-      let nextClicked = await this.clickVisibleText(page, ['下一步', 'Next', '预览', 'Preview'], '[role="dialog"] button, [role="dialog"] [role="button"]');
-      if (!nextClicked) nextClicked = await this.clickVisibleText(page, ['插入', 'Insert'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+      // 预览生成后，在当前弹窗内精确点击 Insert。
+      let nextClicked = await this.clickDialogAction(page, ['插入', 'Insert']);
 
       if (nextClicked) {
         this.addLog(`已点击: ${nextClicked}`);
@@ -565,7 +596,7 @@ export class GoogleSitesPublisher {
 
         // 如果点击的是"下一步"/"预览"，还需要点击"插入"
         if (nextClicked !== '插入' && nextClicked !== 'Insert') {
-          const insertClicked = await this.clickVisibleText(page, ['插入', 'Insert'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+          const insertClicked = await this.clickDialogAction(page, ['插入', 'Insert']);
           if (insertClicked) {
             this.addLog(`已点击插入确认: ${insertClicked}`);
           }
@@ -998,48 +1029,35 @@ export class GoogleSitesPublisher {
     const slug = generateRandomSlug();
     this.addLog(`生成随机 slug: ${slug}`);
 
-    const fillResult = await page.evaluate((params: { slug: string; title: string }) => {
+    const slugInputTarget = await page.evaluate(() => {
       const dialog = document.querySelector('[role="dialog"]');
       const container = dialog || document;
-
       const inputs = Array.from(container.querySelectorAll(
         'input[type="text"], input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'
       )) as HTMLInputElement[];
-
-      function fillInput(input: HTMLInputElement, value: string) {
-        input.focus();
-        // 使用 React 原生 setter 触发 React 状态更新
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-        if (setter) setter.call(input, value);
-        else input.value = value;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-
       // 新建 Google Sites 的发布弹窗通常只有一个文本框，它就是 Web address / slug。
       // 该输入框可能已被网站名称自动预填，因此不能用“值为空”判断。
       const urlInput = inputs.length === 1 ? inputs[0] : inputs.find(i => {
         const label = (i.getAttribute('aria-label') || '').toLowerCase();
         return label.includes('网站名称') || label.includes('site name') || label.includes('web address') || label.includes('url');
       }) || inputs.find(i => i.value === '');
+      if (!urlInput) return { target: null, totalInputs: inputs.length };
+      const rect = urlInput.getBoundingClientRect();
+      return { target: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, totalInputs: inputs.length };
+    });
 
-      // 只有存在第二个输入框时才填写标题，避免把文章标题误写到 slug 中。
-      const titleInput = inputs.length > 1 ? inputs.find(i => {
-        const label = (i.getAttribute('aria-label') || '').toLowerCase();
-        return i !== urlInput && !label.includes('字体大小') && !label.includes('font size');
-      }) : undefined;
-
-      if (titleInput) fillInput(titleInput, params.title);
-      if (urlInput) fillInput(urlInput, params.slug);
-
-      return {
-        titleFilled: !!titleInput,
-        titleValue: titleInput?.value,
-        urlFilled: !!urlInput,
-        urlValue: urlInput?.value,
-        totalInputs: inputs.length,
-      };
-    }, { slug, title });
+    let fillResult: { titleFilled: boolean; urlFilled: boolean; urlValue?: string; totalInputs: number };
+    if (slugInputTarget.target) {
+      await page.mouse.click(slugInputTarget.target.x, slugInputTarget.target.y);
+      await page.keyboard.down('Control');
+      await page.keyboard.press('A');
+      await page.keyboard.up('Control');
+      await page.keyboard.type(slug, { delay: 20 });
+      await page.keyboard.press('Tab');
+      fillResult = { titleFilled: false, urlFilled: true, urlValue: slug, totalInputs: slugInputTarget.totalInputs };
+    } else {
+      fillResult = { titleFilled: false, urlFilled: false, totalInputs: slugInputTarget.totalInputs };
+    }
 
     this.addLog(`输入框填写结果: ${JSON.stringify(fillResult)}`);
 
@@ -1060,7 +1078,18 @@ export class GoogleSitesPublisher {
     // ── 阶段6：点击弹窗内确认发布按钮 ───────────────────────────────────────
     this.addLog('点击弹窗内确认发布按钮...');
 
-    const confirmResult = await this.clickVisibleText(page, ['发布', 'Publish'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+    // 必须在点击前注册监听，Google Sites 的 publish 请求往往会在 1 秒内发出。
+    let publishApiCalled = false;
+    const publishApiListener = (req: any) => {
+      const reqUrl: string = req.url();
+      if (reqUrl.includes('/publish/publish') || reqUrl.includes('/publish/setpublishedstate') || reqUrl.includes('/publish/setpublished')) {
+        publishApiCalled = true;
+        this.addLog(`✅ 检测到发布 API 请求: ${reqUrl.split('?')[0]}`);
+      }
+    };
+    page.on('request', publishApiListener);
+
+    const confirmResult = await this.clickDialogAction(page, ['发布', 'Publish']);
 
     if (confirmResult) {
       this.addLog(`✅ 已点击确认发布按钮: ${confirmResult}`);
@@ -1068,7 +1097,7 @@ export class GoogleSitesPublisher {
       this.addLog('⚠️ 未找到可点击的确认发布按钮，尝试等待更长时间后重试...');
       // 再等 2 秒后重试一次（slug 验证可能需要更长时间）
       await randomDelay(2000, 3000);
-      const retryClick = await this.clickVisibleText(page, ['发布', 'Publish'], '[role="dialog"] button, [role="dialog"] [role="button"]');
+      const retryClick = await this.clickDialogAction(page, ['发布', 'Publish']);
       const retryResult = retryClick ? `重试成功: "${retryClick}"` : await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"]');
         const btns = Array.from(dialog?.querySelectorAll('button, [role="button"]') || []);
@@ -1083,17 +1112,6 @@ export class GoogleSitesPublisher {
     this.addLog('等待发布完成（监听发布 API 请求 + 等待弹窗关闭）...');
 
     let publishConfirmed = false;
-    let publishApiCalled = false;
-
-    // 设置网络请求监听，捕获真正的发布 API 调用
-    const publishApiListener = (req: any) => {
-      const reqUrl: string = req.url();
-      if (reqUrl.includes('/publish/publish') || reqUrl.includes('/publish/setpublishedstate') || reqUrl.includes('/publish/setpublished')) {
-        publishApiCalled = true;
-        this.addLog(`✅ 检测到发布 API 请求: ${reqUrl.split('?')[0]}`);
-      }
-    };
-    page.on('request', publishApiListener);
 
     try {
       // 等待弹窗消失（最多 20 秒）——弹窗消失表示用户点击了确认发布
