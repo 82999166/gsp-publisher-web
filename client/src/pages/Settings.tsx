@@ -87,7 +87,6 @@ export default function Settings() {
     publishUserAgent: "",
     headlessBrowser: true,
     autoApproveThreshold: 0,
-    bannerTitleLinkUrl: "",
     // gsc
     gscEnabled: false,
     gscAutoSubmit: true,
@@ -409,16 +408,6 @@ export default function Settings() {
                   onChange={e => setField("publishUserAgent", e.target.value)}
                   placeholder="留空使用默认 Chrome User-Agent"
                 />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Banner 标题跳转链接（可选）</Label>
-                <Input
-                  type="url"
-                  value={form.bannerTitleLinkUrl ?? ""}
-                  onChange={e => setField("bannerTitleLinkUrl", e.target.value)}
-                  placeholder="https://example.com"
-                />
-                <p className="text-xs text-muted-foreground">填写后，发布页顶部的大标题将可点击并跳转到此网址。仅支持 http 或 https 链接。</p>
               </div>
               <div className="space-y-1.5">
                 <Label>自动通过质量分阈值（0=不自动通过）</Label>

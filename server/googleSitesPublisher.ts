@@ -109,6 +109,8 @@ export interface PublishOptions {
   socialLinks?: Array<{ label: string; url: string; type?: string }>;
   /** Banner 标题点击后跳转的网址（来自系统发布配置） */
   bannerTitleLinkUrl?: string;
+  /** 是否按 Markdown 的标题、段落和列表语义进行自动排版（默认启用） */
+  autoFormatContent?: boolean;
 }
 
 export interface CookieEntry {
@@ -984,7 +986,7 @@ export class GoogleSitesPublisher {
     }
   }
 
-  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string): Promise<string> {
+  private async writeContentAndPublish(page: Page, title: string, content: string, embedBlocks?: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: number | string; embedPosition?: string }>, templateStyles?: PublishOptions['templateStyles'], siteName?: string, anchorLinks?: PublishOptions['anchorLinks'], socialLinks?: PublishOptions['socialLinks'], bannerTitleLinkUrl?: string, autoFormatContent = true): Promise<string> {
     this.addLog(`开始写入内容: ${title}`);
 
     const sections = markdownToPlainSections(content);
@@ -1072,8 +1074,10 @@ export class GoogleSitesPublisher {
           await page.keyboard.press('Enter');
           await randomDelay(100, 200);
 
-          // 写入正文：标题、段落与列表按 Markdown 语义分别排版。
-          const inlineEmbeds = await this.writeMarkdownSections(page, sections);
+          // 按模板偏好写入正文；旧模板默认启用语义化自动排版。
+          const inlineEmbeds = autoFormatContent
+            ? await this.writeMarkdownSections(page, sections)
+            : await this.writeMarkdownSections(page, sections.map(section => section.type === 'h1' ? section : { ...section, type: section.type === 'embed' ? 'embed' : 'p' }));
 
           contentWritten = true;
           this.addLog(`✅ 内容写入成功（通过 ${sel}），标题: ${title}，段落数: ${sections.length}`);
@@ -1107,7 +1111,9 @@ export class GoogleSitesPublisher {
 
           await page.keyboard.type(title, { delay: 15 });
           await page.keyboard.press('Enter');
-          const inlineEmbeds2 = await this.writeMarkdownSections(page, sections);
+          const inlineEmbeds2 = autoFormatContent
+            ? await this.writeMarkdownSections(page, sections)
+            : await this.writeMarkdownSections(page, sections.map(section => section.type === 'h1' ? section : { ...section, type: section.type === 'embed' ? 'embed' : 'p' }));
           contentWritten = true;
           this.addLog('✅ 内容写入成功（通过点击中央激活）');
           if (inlineEmbeds2.length > 0) {
@@ -1555,7 +1561,7 @@ export class GoogleSitesPublisher {
       const siteUrl = await this.navigateToNewSite(page);
 
       // 写入内容并发布
-      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl);
+      const publishedUrl = await this.writeContentAndPublish(page, options.title, options.content, options.embedBlocks, options.templateStyles, options.siteName, options.anchorLinks, options.socialLinks, options.bannerTitleLinkUrl, options.autoFormatContent !== false);
 
       this.addLog("发布任务完成！");
       return {

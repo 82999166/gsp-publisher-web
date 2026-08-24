@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacyTemplateEmbedBlocks } from "./templateEmbedMigration";
+import { getTemplatePublishSettings, migrateLegacyTemplateEmbedBlocks } from "./templateEmbedMigration";
 
 describe("migrateLegacyTemplateEmbedBlocks", () => {
   const legacy = { templateId: 12, embedUrl: "https://legacy.example.com", embedWidth: "100%", embedHeight: "300", embedPosition: "bottom" };
@@ -20,5 +20,21 @@ describe("migrateLegacyTemplateEmbedBlocks", () => {
     const blocks = migrateLegacyTemplateEmbedBlocks({ blocks: [{ id: "p-1", type: "paragraph" }] }, legacy);
     expect(blocks).toHaveLength(2);
     expect(blocks[1]).toMatchObject({ id: "legacy-embed-12", type: "embed", embedUrl: legacy.embedUrl });
+  });
+});
+
+describe("getTemplatePublishSettings", () => {
+  it("读取模板级 Banner 跳转链接和自动排版开关", () => {
+    expect(getTemplatePublishSettings({
+      blocks: [],
+      publish: { bannerTitleLinkUrl: "https://tdavips.com", autoFormatContent: false },
+    })).toEqual({ bannerTitleLinkUrl: "https://tdavips.com", autoFormatContent: false });
+  });
+
+  it("旧模板默认启用自动排版且不继承系统级链接", () => {
+    expect(getTemplatePublishSettings({ blocks: [] })).toEqual({
+      bannerTitleLinkUrl: undefined,
+      autoFormatContent: true,
+    });
   });
 });

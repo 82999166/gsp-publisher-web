@@ -15,6 +15,25 @@ export type LegacyEmbedSettings = {
   embedPosition?: string | null;
 };
 
+export type TemplatePublishSettings = {
+  bannerTitleLinkUrl?: string;
+  autoFormatContent: boolean;
+};
+
+/** 从模板结构读取发布偏好；旧模板没有该字段时保持当前的自动排版行为。 */
+export function getTemplatePublishSettings(structure: unknown): TemplatePublishSettings {
+  const root = structure && typeof structure === "object" && !Array.isArray(structure)
+    ? structure as { publish?: unknown }
+    : null;
+  const publish = root?.publish && typeof root.publish === "object" && !Array.isArray(root.publish)
+    ? root.publish as { bannerTitleLinkUrl?: unknown; autoFormatContent?: unknown }
+    : null;
+  return {
+    bannerTitleLinkUrl: typeof publish?.bannerTitleLinkUrl === "string" ? publish.bannerTitleLinkUrl.trim() || undefined : undefined,
+    autoFormatContent: publish?.autoFormatContent !== false,
+  };
+}
+
 /**
  * 将旧 seo_templates 的模板级 embed* 字段转换为版块配置。
  * 已有任何已配置 URL 的内嵌版块时，以版块为唯一真相，绝不再追加旧 URL。

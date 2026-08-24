@@ -22,7 +22,7 @@ import {
   getPublishTaskById,
 } from "./db";
 import { googleSitesPublisher } from "./googleSitesPublisher";
-import { migrateLegacyTemplateEmbedBlocks } from "@shared/templateEmbedMigration";
+import { getTemplatePublishSettings, migrateLegacyTemplateEmbedBlocks } from "@shared/templateEmbedMigration";
 import { createGoogleOAuthHandler } from "./googleOAuth";
 import { generateFingerprint } from "./fingerprint";
 import { submitUrlToGsc, calcSafeDailyLimit, calcPublishDelay } from "./gscSubmitter";
@@ -1047,6 +1047,7 @@ async function runPublishTaskAsync(
   // 读取网站名称后缀、嵌入内容、版式和模板链接。
   let siteNameSuffix = "";
   let bannerTitleLinkUrl = "";
+  let autoFormatContent = true;
   let embedBlocks: Array<{ embedUrl: string; embedWidth?: string; embedHeight?: string; embedPosition?: string }> = [];
   let templateStyles: {
     h1?: { fontSize?: string; fontWeight?: string; textAlign?: string };
@@ -1072,6 +1073,9 @@ async function runPublishTaskAsync(
         }
         // 旧模板级嵌入配置兼容迁移到唯一的“内嵌网站”版块。
         const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure as string) : tpl.structure;
+        const templatePublishSettings = getTemplatePublishSettings(structure);
+        bannerTitleLinkUrl = templatePublishSettings.bannerTitleLinkUrl ?? "";
+        autoFormatContent = templatePublishSettings.autoFormatContent;
         const normalizedBlocks = migrateLegacyTemplateEmbedBlocks(structure, {
           templateId: tpl.id,
           embedUrl: (tpl as any).embedUrl,
@@ -1109,8 +1113,6 @@ async function runPublishTaskAsync(
     const siteNameSuffixRow = await getSettingByKey("google_site_name_suffix");
     siteNameSuffix = siteNameSuffixRow?.value?.trim() ?? "";
   }
-  const bannerTitleLinkSetting = await getSettingByKey("google_banner_title_link_url");
-  bannerTitleLinkUrl = bannerTitleLinkSetting?.value?.trim() ?? "";
   const computedSiteName = siteNameSuffix ? `${cleanArticleTitle} ${siteNameSuffix}` : cleanArticleTitle;
   embedBlocks = embedBlocks.filter((block, index, all) =>
     !!block.embedUrl && all.findIndex(candidate => candidate.embedUrl === block.embedUrl && candidate.embedPosition === block.embedPosition) === index
@@ -1132,6 +1134,7 @@ async function runPublishTaskAsync(
       anchorLinks: uniqueAnchorLinks.length > 0 ? uniqueAnchorLinks : undefined,
       socialLinks: socialLinks.length > 0 ? socialLinks : undefined,
       bannerTitleLinkUrl: bannerTitleLinkUrl || undefined,
+      autoFormatContent,
     });
     if (result.success) {
       await updatePublishTask(taskId, {

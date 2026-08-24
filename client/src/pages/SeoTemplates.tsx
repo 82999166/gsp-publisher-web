@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
+import { getTemplatePublishSettings } from "@shared/templateEmbedMigration";
 import { toast } from "sonner";
 import {
   Plus, Zap, BookOpen, List, BarChart2, MapPin, Edit2, Trash2, Play,
@@ -578,6 +579,8 @@ export default function SeoTemplates() {
     name: "", type: "informational", description: "", promptTemplate: "",
     minWords: 800, maxWords: 1200,
     siteNameSuffix: "",
+    bannerTitleLinkUrl: "",
+    autoFormatContent: true,
   });
   const [generateForm, setGenerateForm] = useState({ keyword: "", language: "zh-CN" });
   const [previewMode, setPreviewMode] = useState<"desktop" | "tablet" | "mobile">("desktop");
@@ -587,16 +590,19 @@ export default function SeoTemplates() {
   function openCreate() {
     setEditingTemplate(null);
     setBlocks([]);
-    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "" });
+    setEditorForm({ name: "", type: "informational", description: "", promptTemplate: "", minWords: 800, maxWords: 1200, siteNameSuffix: "", bannerTitleLinkUrl: "", autoFormatContent: true });
     setShowEditor(true);
   }
   function openEdit(tpl: any) {
     setEditingTemplate(tpl);
     setBlocks(getMigratedBlocks(tpl));
+    const publishSettings = getTemplatePublishSettings(tpl.structure);
     setEditorForm({
       name: tpl.name, type: tpl.type, description: tpl.description ?? "",
       promptTemplate: tpl.promptTemplate ?? "", minWords: tpl.minWords ?? 800, maxWords: tpl.maxWords ?? 1200,
       siteNameSuffix: tpl.siteNameSuffix ?? "",
+      bannerTitleLinkUrl: publishSettings.bannerTitleLinkUrl ?? "",
+      autoFormatContent: publishSettings.autoFormatContent,
     });
     setShowEditor(true);
   }
@@ -656,7 +662,13 @@ export default function SeoTemplates() {
   }
   function handleSave() {
     const finalPrompt = editorForm.promptTemplate.trim() || buildAutoPrompt();
-    const structure = { blocks };
+    const structure = {
+      blocks,
+      publish: {
+        bannerTitleLinkUrl: editorForm.bannerTitleLinkUrl.trim() || undefined,
+        autoFormatContent: editorForm.autoFormatContent,
+      },
+    };
     const payload = {
       name: editorForm.name, description: editorForm.description || undefined,
       promptTemplate: finalPrompt, minWords: editorForm.minWords, maxWords: editorForm.maxWords, structure,
@@ -692,6 +704,7 @@ export default function SeoTemplates() {
           const typeInfo = getTypeInfo(tpl.type);
           const Icon = typeInfo.icon;
           const savedBlocks = getMigratedBlocks(tpl);
+          const publishSettings = getTemplatePublishSettings(tpl.structure);
           return (
             <Card key={tpl.id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-3">
@@ -727,9 +740,11 @@ export default function SeoTemplates() {
                   </div>
                 )}
                 {/* 发布设置标签 */}
-                {tpl.siteNameSuffix && (
+                {(tpl.siteNameSuffix || publishSettings.bannerTitleLinkUrl || !publishSettings.autoFormatContent) && (
                   <div className="flex flex-wrap gap-1">
                     {tpl.siteNameSuffix && <span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200">后缀: {tpl.siteNameSuffix}</span>}
+                    {publishSettings.bannerTitleLinkUrl && <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200">标题跳转</span>}
+                    {!publishSettings.autoFormatContent && <span className="text-xs px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">保留原始排版</span>}
                   </div>
                 )}
                 <div className="flex gap-2 pt-1">
@@ -903,6 +918,28 @@ export default function SeoTemplates() {
                     />
                     <p className="text-xs text-muted-foreground">留空则仅用关键词作为站点名称</p>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Banner 标题跳转链接（可选）</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      type="url"
+                      placeholder="https://example.com"
+                      value={editorForm.bannerTitleLinkUrl}
+                      onChange={e => setEditorForm(f => ({ ...f, bannerTitleLinkUrl: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">该模板生成并发布的页面，顶部 Banner 标题可点击跳转到此网址。</p>
+                  </div>
+                  <label className="flex items-start gap-2.5 rounded-md border border-border bg-muted/30 px-3 py-2.5 cursor-pointer">
+                    <Checkbox
+                      checked={editorForm.autoFormatContent}
+                      onCheckedChange={checked => setEditorForm(f => ({ ...f, autoFormatContent: checked === true }))}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-xs font-medium text-foreground">按段落自动排版</span>
+                      <span className="block text-xs text-muted-foreground mt-0.5">自动识别 Markdown 标题、普通段落和列表，并在 Google Sites 中保留清晰间距与层级。</span>
+                    </span>
+                  </label>
                   <p className="text-xs text-muted-foreground rounded-md bg-muted/60 px-3 py-2">
                     内嵌网站请在上方「板块顺序与设置」中选择“内嵌网站”并点击编辑图标填写 URL、尺寸和位置。
                   </p>
