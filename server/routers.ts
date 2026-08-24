@@ -930,9 +930,10 @@ const seoTemplatesRouter = router({
     if (input.externalLinks && input.externalLinks.length > 0) {
       linkHint += `\n\n请在文章末尾的「参考资料」部分插入以下外链：\n${input.externalLinks.map(l => `- [${l.anchorText}](${l.url})`).join("\n")}`;
     }
+    const naturalOutputRules = "\n\n重要输出规则：以上字数、结构和篇幅要求仅供内部生成控制，绝不能出现在最终标题或正文中。不要输出“150字”“不少于X字”“第N部分”“本节字数”等说明；标题应自然、简洁，只有真实操作步骤才使用编号。";
     const response = await invokeLLM({ ...await getAiConfig(),
       messages: [
-        { role: "system", content: promptTemplate },
+        { role: "system", content: `${promptTemplate}${naturalOutputRules}` },
         { role: "user", content: `请为关键词「${input.keyword}」创作SEO文章。${linkHint}` },
       ],
     });

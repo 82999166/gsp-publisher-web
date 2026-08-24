@@ -651,13 +651,12 @@ export default function SeoTemplates() {
       const info = getBlockTypeInfo(b.type);
       let line = `${i + 1}. [${info.label}] ${b.title}`;
       if (b.contentHint) line += `：${b.contentHint}`;
-      if (b.minWords) line += `（不少于${b.minWords}字）`;
       if (b.type === "links") line += `（${b.linkColumns}列${b.linkStyle === "card" ? "卡片" : b.linkStyle === "list" ? "列表" : "按钮"}样式，高度${b.linkHeight}px）`;
       if (b.type === "embed") line += `（嵌入高度${b.embedHeight}px${b.embedUrl ? `，URL：${b.embedUrl}` : ""}）`;
       if (b.type === "table") line += `（${b.tableRows}行，列：${b.tableColumns ?? "自动"}）`;
       lines.push(line);
     });
-    lines.push(`\n要求：关键词密度1-2%，自然融入；Markdown格式输出。`);
+    lines.push(`\n输出规则：使用自然、专业的 Markdown 文章结构；不要在标题或正文中输出字数、最低字数、写作提示、章节配额、机械化编号或“第N部分”等内部要求。仅在确有步骤顺序时使用编号。`);
     return lines.join("\n");
   }
   function handleSave() {

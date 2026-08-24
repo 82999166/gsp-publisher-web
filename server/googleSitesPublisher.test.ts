@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GOOGLE_SITES_EMBED_PUBLISHING_ENABLED, markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
+import { cleanPublishedHeading, GOOGLE_SITES_EMBED_PUBLISHING_ENABLED, markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
 
 describe("Google Sites 内容解析", () => {
   it("将 iframe 解析为嵌入块，而不是作为代码文字写入页面", () => {
@@ -57,6 +57,17 @@ describe("Google Sites 内容解析", () => {
     expect(GOOGLE_SITES_EMBED_PUBLISHING_ENABLED).toBe(false);
     expect(markdownToPlainSections('<iframe src="https://example.com" height="300"></iframe>')).toEqual([
       { type: "embed", text: "", embedUrl: "https://example.com", embedHeight: 300 },
+    ]);
+  });
+
+  it("发布前清理标题中的字数配额痕迹", () => {
+    expect(cleanPublishedHeading("认识职场逆袭的本质（150+字）")).toBe("认识职场逆袭的本质");
+    expect(cleanPublishedHeading("制定清晰的职业规划（不少于 300 字）")).toBe("制定清晰的职业规划");
+    expect(markdownToPlainSections("## 提升核心竞争力（150+字）")).toEqual([
+      { type: "h2", text: "提升核心竞争力" },
+    ]);
+    expect(markdownToPlainSections("1. 制定清晰的职业规划（150+字）")).toEqual([
+      { type: "ol", text: "1. 制定清晰的职业规划" },
     ]);
   });
 });

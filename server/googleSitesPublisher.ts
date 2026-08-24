@@ -163,6 +163,14 @@ export function normalizeExternalHttpUrl(value?: string): string | undefined {
   }
 }
 
+/** 清理模型偶尔复制到标题中的字数要求，避免将内部生成约束呈现给读者。 */
+export function cleanPublishedHeading(value: string): string {
+  return value
+    .replace(/\s*[（(]\s*(?:(?:不少于|至少|约|大约)\s*)?\d+(?:\s*[-~—至]\s*\d+)?\s*\+?\s*(?:个|多)?\s*(?:字|words?)\s*(?:以上|左右|起)?\s*[）)]/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 /** 将 Markdown 内容转换为适合 Google Sites 的标题、段落、列表和内嵌块。 */
 export function markdownToPlainSections(markdown: string): GoogleSitesSection[] {
   const lines = markdown.split("\n");
@@ -190,13 +198,13 @@ export function markdownToPlainSections(markdown: string): GoogleSitesSection[] 
 
     if (trimmed.startsWith("### ")) {
       flushParagraph();
-      sections.push({ type: "h3", text: plainText(trimmed.slice(4)) });
+      sections.push({ type: "h3", text: cleanPublishedHeading(plainText(trimmed.slice(4))) });
     } else if (trimmed.startsWith("## ")) {
       flushParagraph();
-      sections.push({ type: "h2", text: plainText(trimmed.slice(3)) });
+      sections.push({ type: "h2", text: cleanPublishedHeading(plainText(trimmed.slice(3))) });
     } else if (trimmed.startsWith("# ")) {
       flushParagraph();
-      sections.push({ type: "h1", text: plainText(trimmed.slice(2)) });
+      sections.push({ type: "h1", text: cleanPublishedHeading(plainText(trimmed.slice(2))) });
     } else {
       if (trimmed.includes('<iframe')) {
         const srcMatch = trimmed.match(/src=["'](.*?)['"]/);
@@ -211,10 +219,10 @@ export function markdownToPlainSections(markdown: string): GoogleSitesSection[] 
       const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
       if (ordered) {
         flushParagraph();
-        sections.push({ type: "ol", text: `${ordered[1]}. ${plainText(ordered[2])}` });
+        sections.push({ type: "ol", text: `${ordered[1]}. ${cleanPublishedHeading(plainText(ordered[2]))}` });
       } else if (unordered) {
         flushParagraph();
-        sections.push({ type: "ul", text: `• ${plainText(unordered[1])}` });
+        sections.push({ type: "ul", text: `• ${cleanPublishedHeading(plainText(unordered[1]))}` });
       } else if (!trimmed.includes('<iframe')) {
         paragraphLines.push(trimmed);
       }
@@ -520,6 +528,71 @@ export class GoogleSitesPublisher {
     } catch {}
   }
 
+  /** 将当前已选文本写成 Google Sites 的真实链接，而不是将 URL 作为普通文字输出。 */
+  private async applySelectedTextLink(page: Page, url: string, description: string): Promise<boolean> {
+    const normalizedUrl = normalizeExternalHttpUrl(url);
+    if (!normalizedUrl) {
+      this.addLog(`⚠️ ${description}跳转链接格式无效，已跳过: ${url}`);
+      return false;
+    }
+    try {
+      await page.keyboard.down('Control');
+      await page.keyboard.press('k');
+      await page.keyboard.up('Control');
+      try {
+        await page.waitForSelector('[role="dialog"] input', { timeout: 2500 });
+      } catch {
+        const toolbarLink = await page.evaluate(() => {
+          const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
+            const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('data-tooltip') ?? ''} ${element.getAttribute('title') ?? ''}`.toLowerCase();
+            const rect = (element as HTMLElement).getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && /(^|\s)(insert )?link|链接/.test(label) && !/unlink|移除链接/.test(label);
+          }) as HTMLElement | undefined;
+          if (!candidate) return null;
+          const rect = candidate.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        if (toolbarLink) await page.mouse.click(toolbarLink.x, toolbarLink.y);
+      }
+      await page.waitForSelector('[role="dialog"] input', { timeout: 6000 });
+      const linkInput = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const input = Array.from(dialog?.querySelectorAll('input') ?? []).find((element) => {
+          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.trim();
+          const rect = (element as HTMLInputElement).getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && (/^link$/i.test(label) || /^链接$/i.test(label));
+        }) as HTMLInputElement | undefined;
+        if (!input) return null;
+        const rect = input.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+      if (!linkInput) throw new Error('未找到 Link 输入框');
+      await page.mouse.click(linkInput.x, linkInput.y);
+      await page.keyboard.down('Control');
+      await page.keyboard.press('a');
+      await page.keyboard.up('Control');
+      await page.keyboard.type(normalizedUrl, { delay: 10 });
+      const written = await page.evaluate((expected) => Array.from(document.querySelectorAll('[role="dialog"] input'))
+        .some((input) => (input as HTMLInputElement).value.trim() === expected), normalizedUrl);
+      if (!written) throw new Error('链接未写入输入框');
+      if (!await this.clickDialogAction(page, ['应用', 'Apply'])) throw new Error('未找到 Apply 按钮');
+      await page.waitForSelector('[role="dialog"]', { hidden: true, timeout: 5000 }).catch(() => undefined);
+      const persisted = await page.evaluate((expected) => Array.from(document.querySelectorAll('a[href], [data-url]'))
+        .some((element) => (element.getAttribute('href') ?? element.getAttribute('data-url') ?? '').includes(expected)), normalizedUrl);
+      if (!persisted) {
+        this.addLog(`⚠️ ${description}链接对话框已关闭，但编辑器未发现 ${normalizedUrl} 的链接证据`);
+        return false;
+      }
+      this.addLog(`✅ ${description}真实跳转链接已设置: ${normalizedUrl}`);
+      return true;
+    } catch (error) {
+      this.addLog(`⚠️ ${description}跳转链接设置失败: ${error instanceof Error ? error.message : String(error)}`);
+      await this.logEditorInteractionState(page, `${description}跳转失败`);
+      try { await this.clickDialogAction(page, ['取消', 'Cancel']); } catch {}
+      return false;
+    }
+  }
+
   /** 在 Google Sites Banner 标题上创建真实超链接，失败时仅记录日志而不影响文章发布。 */
   private async applyBannerTitleLink(page: Page, title: string, configuredUrl?: string): Promise<void> {
     const url = normalizeExternalHttpUrl(configuredUrl);
@@ -596,67 +669,7 @@ export class GoogleSitesPublisher {
       }
 
       await randomDelay(250, 450);
-      // 首先使用 Google Sites 的标准快捷键，避免误点到页面其他同名 Link 控件。
-      await page.keyboard.down('Control');
-      await page.keyboard.press('k');
-      await page.keyboard.up('Control');
-      try {
-        await page.waitForSelector('[role="dialog"] input', { timeout: 2500 });
-      } catch {
-        const toolbarLink = await page.evaluate(() => {
-        const candidate = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) => {
-          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('data-tooltip') ?? ''} ${element.getAttribute('title') ?? ''}`.toLowerCase();
-          const rect = (element as HTMLElement).getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && /(^|\s)(insert )?link|链接/.test(label) && !/unlink|移除链接/.test(label);
-        }) as HTMLElement | undefined;
-        if (!candidate) return null;
-        const rect = candidate.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        });
-        if (toolbarLink) await page.mouse.click(toolbarLink.x, toolbarLink.y);
-      }
-
-      await page.waitForSelector('[role="dialog"] input', { timeout: 6000 });
-      const linkInput = await page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        const input = Array.from(dialog?.querySelectorAll('input') ?? []).find((element) => {
-          const label = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('placeholder') ?? ''}`.trim();
-          const rect = (element as HTMLInputElement).getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && (/^link$/i.test(label) || /^链接$/i.test(label));
-        }) as HTMLInputElement | undefined;
-        if (!input) return null;
-        const rect = input.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      });
-      if (!linkInput) {
-        this.addLog('⚠️ 标题跳转链接对话框中未找到 Link 输入框');
-        await this.clickDialogAction(page, ['取消', 'Cancel']);
-        return;
-      }
-
-      await page.mouse.click(linkInput.x, linkInput.y);
-      await page.keyboard.down('Control');
-      await page.keyboard.press('a');
-      await page.keyboard.up('Control');
-      await page.keyboard.press('Backspace');
-      await page.keyboard.type(url, { delay: 10 });
-      const linkWritten = await page.evaluate((expected) => {
-        const dialog = document.querySelector('[role="dialog"]');
-        return Array.from(dialog?.querySelectorAll('input') ?? []).some((input) => (input as HTMLInputElement).value.trim() === expected);
-      }, url);
-      if (!linkWritten) {
-        this.addLog('⚠️ Banner 标题跳转链接未写入输入框，已取消');
-        await this.clickDialogAction(page, ['取消', 'Cancel']);
-        return;
-      }
-      const applied = await this.clickDialogAction(page, ['应用', 'Apply']);
-      if (!applied) {
-        this.addLog('⚠️ 未找到标题跳转链接的 Apply 按钮');
-        await this.clickDialogAction(page, ['取消', 'Cancel']);
-        return;
-      }
-      await randomDelay(500, 900);
-      this.addLog(`✅ Banner 标题跳转链接已设置: ${url}`);
+      await this.applySelectedTextLink(page, url, 'Banner 标题');
     } catch (error) {
       this.addLog(`⚠️ Banner 标题跳转链接设置失败: ${error instanceof Error ? error.message : String(error)}`);
       await this.logEditorInteractionState(page, '标题跳转失败');
@@ -1266,7 +1279,11 @@ export class GoogleSitesPublisher {
         await page.keyboard.press('Enter');
         await randomDelay(100, 200);
         for (const link of anchorLinks) {
-          await page.keyboard.type(`${link.text}: ${link.url}`, { delay: 8 });
+          await page.keyboard.type(link.text, { delay: 8 });
+          await page.keyboard.down('Shift');
+          await page.keyboard.press('Home');
+          await page.keyboard.up('Shift');
+          await this.applySelectedTextLink(page, link.url, `正文链接「${link.text}」`);
           await page.keyboard.press('Enter');
           await randomDelay(50, 100);
         }
@@ -1289,7 +1306,11 @@ export class GoogleSitesPublisher {
         await page.keyboard.press('Enter');
         await randomDelay(100, 200);
         for (const link of socialLinks) {
-          await page.keyboard.type(`${link.label}: ${link.url}`, { delay: 8 });
+          await page.keyboard.type(link.label, { delay: 8 });
+          await page.keyboard.down('Shift');
+          await page.keyboard.press('Home');
+          await page.keyboard.up('Shift');
+          await this.applySelectedTextLink(page, link.url, `社交链接「${link.label}」`);
           await page.keyboard.press('Enter');
           await randomDelay(50, 100);
         }
