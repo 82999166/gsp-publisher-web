@@ -4,6 +4,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { assertSupportedAiModel, isAiProvider, normalizeAiModel } from "./aiConfig";
 import {
   getAccounts, getAccountById, createAccount, updateAccount, deleteAccount, batchDeleteAccounts,
   getMaterials, getMaterialById, createMaterial, updateMaterial, deleteMaterial,
@@ -58,17 +59,16 @@ async function getAiConfig() {
   const rows = await getSettings();
   const obj: Record<string, string> = {};
   for (const r of rows) { if (r.value != null) obj[r.key] = r.value; }
-  const provider = obj["ai_engine"] ?? "groq";
+  const rawProvider = obj["ai_engine"] ?? "groq";
+  const provider = isAiProvider(rawProvider) ? rawProvider : "groq";
   const apiKey = obj["ai_api_key"] ?? "";
   if (!apiKey) {
     throw new Error("请先在「系统设置 > AI 配置」中填写 API Key！Groq 免费 Key 可在 https://console.groq.com 获取");
   }
-  let model = obj["ai_model"] ?? "llama-3.3-70b-versatile";
-  // Check if model is deprecated and use fallback
-  const deprecatedModels = ["llama3-70b-8192", "mixtral-8x7b-32768", "llama3-8b-8192"];
-  if (deprecatedModels.includes(model)) {
-    console.warn(`Model ${model} is deprecated, using llama-3.3-70b-versatile instead`);
-    model = "llama-3.3-70b-versatile";
+  const configuredModel = obj["ai_model"];
+  const model = normalizeAiModel(provider, configuredModel);
+  if (configuredModel && configuredModel !== model) {
+    console.warn(`AI model ${configuredModel} is unavailable for ${provider}, using ${model} instead`);
   }
   // Determine base URL from provider if not explicitly set
   let apiUrl = obj["ai_base_url"] ?? "";
@@ -756,9 +756,12 @@ const settingsRouter = router({
       siteDescription: obj["site_description"] ?? "",
       defaultLanguage: obj["default_language"] ?? "zh-CN",
       timezone: obj["timezone"] ?? "Asia/Shanghai",
-      aiProvider: obj["ai_engine"] ?? "groq",
+      aiProvider: isAiProvider(obj["ai_engine"] ?? "groq") ? obj["ai_engine"] : "groq",
       groqApiKey: obj["ai_api_key"] ?? "",
-      aiModel: obj["ai_model"] ?? "llama-3.3-70b-versatile",
+      aiModel: normalizeAiModel(
+        isAiProvider(obj["ai_engine"] ?? "groq") ? obj["ai_engine"] as "groq" | "openai" : "groq",
+        obj["ai_model"],
+      ),
       aiBaseUrl: obj["ai_base_url"] ?? "",
       aiTemperature: parseFloat(obj["ai_temperature"] ?? "0.7"),
       aiMaxTokens: parseInt(obj["ai_max_tokens"] ?? "4096"),
@@ -786,7 +789,7 @@ const settingsRouter = router({
     siteDescription: z.string().optional(),
     defaultLanguage: z.string().optional(),
     timezone: z.string().optional(),
-    aiProvider: z.string().optional(),
+    aiProvider: z.enum(["groq", "openai"]).optional(),
     groqApiKey: z.string().optional(),
     aiModel: z.string().optional(),
     aiTemperature: z.number().optional(),
@@ -808,6 +811,13 @@ const settingsRouter = router({
     gscSiteUrl: z.string().optional(),
     aiBaseUrl: z.string().optional(),
   })).mutation(async ({ input }) => {
+    if (input.aiProvider !== undefined || input.aiModel !== undefined) {
+      const currentSettings = await getSettings();
+      const currentProviderValue = currentSettings.find(s => s.key === "ai_engine")?.value ?? "groq";
+      const provider = input.aiProvider ?? (isAiProvider(currentProviderValue) ? currentProviderValue : "groq");
+      const model = input.aiModel ?? currentSettings.find(s => s.key === "ai_model")?.value ?? normalizeAiModel(provider);
+      assertSupportedAiModel(provider, model);
+    }
     const mapping: Record<string, string | undefined> = {
       site_name: input.siteName,
       google_site_name_suffix: input.googleSiteNameSuffix,

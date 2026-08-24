@@ -34,6 +34,24 @@ const sections: { id: SettingSection; label: string; icon: React.ReactNode }[] =
   { id: "gsc", label: "Google Search Console", icon: <Key className="h-4 w-4" /> },
 ];
 
+const aiModelOptions: Record<string, { value: string; label: string }[]> = {
+  groq: [
+    { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B（推荐，长文质量）" },
+    { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B（更快）" },
+    { value: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B" },
+    { value: "groq/compound", label: "Groq Compound" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { value: "kimi-k2-0711-preview", label: "Kimi K2（需填写 Moonshot Base URL）" },
+  ],
+};
+
+function defaultModelForProvider(provider: string) {
+  return aiModelOptions[provider]?.[0]?.value ?? "openai/gpt-oss-120b";
+}
+
 export default function Settings() {
   const [activeSection, setActiveSection] = useState<SettingSection>("general");
   const { data: settings, isLoading } = trpc.settings.get.useQuery();
@@ -52,7 +70,7 @@ export default function Settings() {
     // ai
     aiProvider: "groq",
     groqApiKey: "",
-    aiModel: "llama-3.3-70b-versatile",
+    aiModel: "openai/gpt-oss-120b",
     aiTemperature: 0.7,
     aiMaxTokens: 4096,
     // proxy
@@ -89,7 +107,13 @@ export default function Settings() {
   }
 
   function setField(key: string, value: any) {
-    setForm(prev => ({ ...prev, [key]: value }));
+    setForm(prev => {
+      if (key !== "aiProvider") return { ...prev, [key]: value };
+      const nextModel = aiModelOptions[value]?.some(option => option.value === prev.aiModel)
+        ? prev.aiModel
+        : defaultModelForProvider(value);
+      return { ...prev, aiProvider: value, aiModel: nextModel };
+    });
   }
 
   if (isLoading) {
@@ -188,9 +212,8 @@ export default function Settings() {
                   <Select value={form.aiProvider} onValueChange={v => setField("aiProvider", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="groq">Groq (推荐，免费)</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                      <SelectItem value="groq">Groq（当前已验证）</SelectItem>
+                      <SelectItem value="openai">OpenAI / OpenAI 兼容 API</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -199,12 +222,9 @@ export default function Settings() {
                   <Select value={form.aiModel} onValueChange={v => setField("aiModel", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (推荐)</SelectItem>
-                      <SelectItem value="llama-3.1-8b-instant">Llama 3.1 8B Instant (快速)</SelectItem>
-                      <SelectItem value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B (预览)</SelectItem>
-                      <SelectItem value="qwen/qwen3-32b">Qwen3 32B (预览)</SelectItem>
-                      <SelectItem value="gpt-4o">GPT-4o (OpenAI)</SelectItem>
-                      <SelectItem value="gpt-4o-mini">GPT-4o Mini (OpenAI)</SelectItem>
+                      {(aiModelOptions[form.aiProvider] ?? aiModelOptions.groq).map(option => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

@@ -273,3 +273,9 @@
 - [x] 审计 AI 内容生成页与发布页的共用 Dialog、Select、Toast 和 Portal 组件
 - [x] 修复浏览器翻译篡改 React DOM 的根因：设置中文语言与全局 notranslate 防护
 - [ ] 验证 AI 生成与发布操作均不再触发错误边界
+
+## AI 模型配置 404 修复（2026-08-24）
+
+- [x] 审计正式服务器的 ai_provider、ai_base_url、ai_model 与 API Key 配置
+- [x] 修复失效模型默认值并限制不兼容的供应商模型组合
+- [x] 用真实 Groq chat/completions 请求验证修复后模型可正常响应
