@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
+import { GOOGLE_SITES_EMBED_PUBLISHING_ENABLED, markdownToPlainSections, normalizeExternalHttpUrl } from "./googleSitesPublisher";
 
 describe("Google Sites 内容解析", () => {
   it("将 iframe 解析为嵌入块，而不是作为代码文字写入页面", () => {
@@ -51,5 +51,12 @@ describe("Google Sites 内容解析", () => {
     expect(normalizeExternalHttpUrl("https://tdavips.com")).toBe("https://tdavips.com/");
     expect(normalizeExternalHttpUrl("javascript:alert(1)")).toBeUndefined();
     expect(normalizeExternalHttpUrl("not a url")).toBeUndefined();
+  });
+
+  it("当前发布阶段临时关闭内嵌网站浏览器交互，但保留内容解析能力", () => {
+    expect(GOOGLE_SITES_EMBED_PUBLISHING_ENABLED).toBe(false);
+    expect(markdownToPlainSections('<iframe src="https://example.com" height="300"></iframe>')).toEqual([
+      { type: "embed", text: "", embedUrl: "https://example.com", embedHeight: 300 },
+    ]);
   });
 });

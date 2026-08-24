@@ -74,6 +74,12 @@ async function getChromiumPath(): Promise<string> {
 // 注册 Stealth 插件（绕过 Google 反爬虫检测）
 puppeteerExtra.use(StealthPlugin());
 
+/**
+ * 临时隔离内嵌网站浏览器交互，优先验证页面排版与 Banner 标题跳转。
+ * 模板配置和 Markdown iframe 解析仍会保留；恢复时仅将此值改为 true。
+ */
+export const GOOGLE_SITES_EMBED_PUBLISHING_ENABLED = false;
+
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 export interface PublishOptions {
   /** Google 账号 Cookie（JSON 数组格式，来自 Cookie-Editor 等插件） */
@@ -1294,7 +1300,7 @@ export class GoogleSitesPublisher {
     }
 
     // ── 阶段3：插入内嵌网站板块（如果有）──────────────────────────────────────
-    if (embedBlocks && embedBlocks.length > 0) {
+    if (embedBlocks && embedBlocks.length > 0 && GOOGLE_SITES_EMBED_PUBLISHING_ENABLED) {
       this.addLog(`开始插入 ${embedBlocks.length} 个内嵌网站板块...`);
       const failedEmbedUrls: string[] = [];
       for (const block of embedBlocks) {
@@ -1308,6 +1314,8 @@ export class GoogleSitesPublisher {
       if (failedEmbedUrls.length > 0) {
         throw new Error(`内嵌网站未成功插入，已停止发布：${failedEmbedUrls.join(', ')}`);
       }
+    } else if (embedBlocks && embedBlocks.length > 0) {
+      this.addLog(`⚠️ 当前版本临时跳过 ${embedBlocks.length} 个内嵌网站板块，优先验证页面排版与 Banner 标题跳转；模板内嵌配置已保留。`);
     }
 
         // ── 阶段3.5：关闭嵌入类残留弹窗 ─────────────────────────────────────
